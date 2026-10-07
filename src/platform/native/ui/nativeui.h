@@ -340,6 +340,8 @@ bool SkipHoldComplete();
 // Any button pressed in a cutscene (its letterbox showing), for the game's own triangle skips
 bool CutsceneSkipPressed();
 f32 SkipHoldProgress();
+// How many skips have completed (the level sweep's checks)
+u32 SkipsDone();
 bool MovieSkipHeld();
 void SkipHoldForTest(bool forced, const std::vector<s32>& inputs, f32 seconds);
 // The game clock's frames a second for the retail value (the 60 Hz option's)

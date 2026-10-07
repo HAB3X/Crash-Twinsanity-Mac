@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 
 #pragma STDC FENV_ACCESS ON
 #pragma clang fp contract(off)
@@ -1118,6 +1119,57 @@ f32 Eatan(f32 x)
 }
 }
 
+namespace
+{
+// A run that never ends (native/NATIVE.md "VU1 runs that never end"): a frame's runs kick a few hundred packets at most and run a
+// few million instructions (the PS2's VU1 does at most 5 million in a 60 Hz frame); one going past RunawayKicks or RunawayInstructions has
+// run away (an endless loop over its input) and is stopped so the game goes on, said once a program.
+// Per thread: VU1 can run on the render thread while VU0 runs on the game's
+constexpr u64 RunawayKicks = 20000;
+constexpr u64 RunawayInstructions = 10000000;
+thread_local u64 g_KicksThisRun = 0;
+thread_local u64 g_RunExecuted = 0;
+thread_local bool g_RanAway = false;
+
+void StopRunaway(u32 unit, u32 start, const char* why)
+{
+    static std::mutex lock;
+    static u32 reported[16];
+    static u32 count = 0;
+    std::lock_guard<std::mutex> guard(lock);
+    u32 key = unit << 16 | start;
+    for (u32 i = 0; i < count; i++)
+    {
+        if (reported[i] == key)
+        {
+            return;
+        }
+    }
+
+    if (count < 16)
+    {
+        reported[count++] = key;
+        std::fprintf(stderr, "graphics: the VU%u program run at %#x %s: stopped (it doesn't end)\n", unit, start, why);
+    }
+}
+}
+
+bool Vu::RanAway()
+{
+    return g_RanAway;
+}
+
+bool Vu::RunawayCheck()
+{
+    if (!g_RanAway && executed - g_RunExecuted > RunawayInstructions)
+    {
+        StopRunaway(index_, runStart, "ran 10 million instructions");
+        g_RanAway = true;
+    }
+
+    return g_RanAway;
+}
+
 void Vu::Run(u32 start)
 {
     if (!timing)
@@ -1154,6 +1206,17 @@ void Vu::Kick(u32 address)
         return;
     }
 
+    if (++g_KicksThisRun > RunawayKicks)
+    {
+        if (!g_RanAway)
+        {
+            StopRunaway(index_, runStart, "kicked 20,000 packets");
+        }
+
+        g_RanAway = true;
+        return;
+    }
+
     if (!timing)
     {
         xgkick(address);
@@ -1181,6 +1244,8 @@ void Vu::RunInterpreted(u32 start)
 
 void Vu::BeginMicro(VuMicroState& state, u32 start)
 {
+    g_KicksThisRun = 0;
+    g_RanAway = false;
     state = VuMicroState{};
     state.pending.mac = macFlag;
     state.pending.status = statusFlag;
@@ -1188,6 +1253,7 @@ void Vu::BeginMicro(VuMicroState& state, u32 start)
     state.startStatus = statusFlag;
     state.pc = start & (codeSize_ - 1);
     runStart = state.pc;
+    g_RunExecuted = executed;
 }
 
 // The pipelines' finished results made visible
@@ -1246,6 +1312,11 @@ void Vu::EndMicro(VuMicroState& state)
 
 bool Vu::StepMicro(VuMicroState& state)
 {
+    if (RunawayCheck())
+    {
+        return false;
+    }
+
     Pipelines& pipes = state.pipes;
     Pending& pending = state.pending;
     u64& cycle = state.cycle;

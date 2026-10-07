@@ -32,7 +32,6 @@ The app ends up in `build/native/dist`.
 
 * Steady 60 fps (about 40 fps at the beach right now)
 * Finish testing every level (73 of 131 areas checked so far)
-* Rockslide Rumble freezes in its opening cutscene
 
 ## Credits
 

@@ -125,9 +125,10 @@ void ApplyGameSettingsOnce()
 }
 
 // ------------------------------------------------------------------------------------------------------- hold any button to skip
-// The cutscenes' and the movies' skip (the cutscene skip option): any key, mouse button or pad button held SkipHoldSeconds skips,
-// counted only when it's pressed after the scene began (what was held as it began, running or jumping into it, is ignored until
-// it's let go). A scene is the polls in a row (the skip condition's, a movie's frames'): a gap of SceneGap starts another
+// The cutscenes' and the movies' skip (the cutscene skip option): any key, mouse button or pad button (not the ones that move, walk
+// or turn the camera, nor the D-pad) held SkipHoldSeconds skips, counted only when it's pressed after the scene began (what was
+// held as it began, running or jumping into it, is ignored until it's let go). A scene is the polls in a row (the skip
+// condition's, a movie's frames'): a gap of SceneGap starts another
 namespace
 {
 using SkipClock = std::chrono::steady_clock;
@@ -150,63 +151,89 @@ struct SkipHold
     f32 progress = 0.0f;
 };
 SkipHold g_Skip;
+// Skips done (the sweep's check that each one stops its audio)
+u32 g_SkipCount = 0;
 bool g_SkipInputsForced = false;
 std::vector<s32> g_SkipForcedInputs;
 bool g_SkipClockForced = false;
 SkipClock::time_point g_SkipForcedNow;
 
-// The inputs held: keys (SDL scancodes), the mouse's buttons (0x10000 + SDL's), the pad's buttons (0x20000 + SDL's) and triggers
-// (0x30000 + 0 or 1)
+// Moving, walking, the camera and the D-pad don't skip (steering through a scene with its dialogue would cut it): the keys bound to
+// them, the pad's D-pad
+bool Steers(s32 input)
+{
+    if (input >= 0x20000 + SDL_GAMEPAD_BUTTON_DPAD_UP && input <= 0x20000 + SDL_GAMEPAD_BUTTON_DPAD_RIGHT)
+    {
+        return true;
+    }
+
+    for (u32 function = BindMoveForward; input < 0x10000 && function <= BindRight; function++)
+    {
+        const Binding& binding = GetBinding(function);
+        if (binding.keys[0] == input || binding.keys[1] == input)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// The inputs held that count: keys (SDL scancodes), the mouse's buttons (0x10000 + SDL's), the pad's buttons (0x20000 + SDL's)
+// and triggers (0x30000 + 0 or 1)
 std::vector<s32> HeldInputs()
 {
+    std::vector<s32> held;
     if (g_SkipInputsForced)
     {
-        return g_SkipForcedInputs;
+        held = g_SkipForcedInputs;
     }
-
-    std::vector<s32> held;
-    int count = 0;
-    const bool* keys = SDL_GetKeyboardState(&count);
-    for (int key = 0; keys != nullptr && key < count; key++)
+    else
     {
-        if (keys[key])
+        int count = 0;
+        const bool* keys = SDL_GetKeyboardState(&count);
+        for (int key = 0; keys != nullptr && key < count; key++)
         {
-            held.push_back(key);
-        }
-    }
-
-    if (SDL_GetMouseFocus() != nullptr || MouseLookActive())
-    {
-        SDL_MouseButtonFlags mouse = SDL_GetMouseState(nullptr, nullptr);
-        for (int button = SDL_BUTTON_LEFT; button <= SDL_BUTTON_X2; button++)
-        {
-            if ((mouse & SDL_BUTTON_MASK(button)) != 0)
+            if (keys[key])
             {
-                held.push_back(0x10000 + button);
+                held.push_back(key);
+            }
+        }
+
+        if (SDL_GetMouseFocus() != nullptr || MouseLookActive())
+        {
+            SDL_MouseButtonFlags mouse = SDL_GetMouseState(nullptr, nullptr);
+            for (int button = SDL_BUTTON_LEFT; button <= SDL_BUTTON_X2; button++)
+            {
+                if ((mouse & SDL_BUTTON_MASK(button)) != 0)
+                {
+                    held.push_back(0x10000 + button);
+                }
+            }
+        }
+
+        SDL_Gamepad* gamepad = LastGamepad();
+        if (gamepad != nullptr)
+        {
+            for (int button = 0; button < SDL_GAMEPAD_BUTTON_COUNT; button++)
+            {
+                if (SDL_GetGamepadButton(gamepad, static_cast<SDL_GamepadButton>(button)))
+                {
+                    held.push_back(0x20000 + button);
+                }
+            }
+
+            for (int trigger = 0; trigger < 2; trigger++)
+            {
+                if (SDL_GetGamepadAxis(gamepad, trigger == 0 ? SDL_GAMEPAD_AXIS_LEFT_TRIGGER : SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 16384)
+                {
+                    held.push_back(0x30000 + trigger);
+                }
             }
         }
     }
 
-    SDL_Gamepad* gamepad = LastGamepad();
-    if (gamepad != nullptr)
-    {
-        for (int button = 0; button < SDL_GAMEPAD_BUTTON_COUNT; button++)
-        {
-            if (SDL_GetGamepadButton(gamepad, static_cast<SDL_GamepadButton>(button)))
-            {
-                held.push_back(0x20000 + button);
-            }
-        }
-
-        for (int trigger = 0; trigger < 2; trigger++)
-        {
-            if (SDL_GetGamepadAxis(gamepad, trigger == 0 ? SDL_GAMEPAD_AXIS_LEFT_TRIGGER : SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 16384)
-            {
-                held.push_back(0x30000 + trigger);
-            }
-        }
-    }
-
+    held.erase(std::remove_if(held.begin(), held.end(), Steers), held.end());
     return held;
 }
 
@@ -290,6 +317,11 @@ bool PollSkipHold()
     {
         skip.done = true;
         skip.doneAt = now;
+        g_SkipCount++;
+        if (!g_SkipInputsForced)
+        {
+            Native::Log("skip: held %.1f s, skipped", SkipHoldSeconds);
+        }
         return true;
     }
 
@@ -330,6 +362,11 @@ f32 SkipHoldProgress()
     }
 
     return g_Skip.done ? 1.0f : g_Skip.progress;
+}
+
+u32 SkipsDone()
+{
+    return g_SkipCount;
 }
 
 bool MovieSkipHeld()

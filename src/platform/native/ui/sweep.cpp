@@ -9,6 +9,7 @@
 #include "native.h"
 
 #include "game/gamecontroller.h"
+#include "game/sound.h"
 #include "game/string.h"
 
 #include <chrono>
@@ -35,6 +36,17 @@ bool g_Playing = false;
 f32 g_Played = 0.0f;
 Clock::time_point g_LastFrame;
 u32 g_Frames = 0;
+u32 g_SkipsSeen = 0;
+Clock::time_point g_SkipAt;
+bool g_SkipCheckDue = false;
+
+// The play's character and its pairing (alone, the Humiliskate, the Rollerbrawl, tied, the hoverboard ...)
+void LogPlay(GameController* controller, const char* when)
+{
+    const PlayState& play = controller->progress.play;
+    Native::Log("sweep: %s: mode %u, pairing %u, character %u, second %u, area %u", when, play.mode, play.pairing, play.character,
+                play.second, play.area);
+}
 
 void ReadSettings()
 {
@@ -135,6 +147,24 @@ void SweepFrame()
         {
             g_Playing = true;
             g_PlayStart = now;
+            LogPlay(controller, "play started");
+        }
+
+        // A skip's audio: half a second after it, the context music slot (the cutscene's dialogue and music) stopped
+        if (SkipsDone() != g_SkipsSeen)
+        {
+            g_SkipsSeen = SkipsDone();
+            g_SkipAt = now;
+            g_SkipCheckDue = true;
+        }
+
+        if (g_SkipCheckDue && std::chrono::duration<f32>(now - g_SkipAt).count() > 0.5f)
+        {
+            g_SkipCheckDue = false;
+            MusicPlayer* player = g_Music != nullptr ? g_Music->playing[ContextMusicSlot] : nullptr;
+            u32 music = player != nullptr ? static_cast<u32>(player->bits.state) : 0;
+            bool sounding = music == MusicPlayer::Playing || music == MusicPlayer::FadingIn || music == MusicPlayer::Ready;
+            Native::Log("sweep: skip: the context music slot %s (state %u)", sounding ? "still playing" : "stopped", music);
         }
 
         g_Frames++;
@@ -142,10 +172,11 @@ void SweepFrame()
         controller->hudDelay = 0;
         if (g_Played >= g_Seconds)
         {
+            LogPlay(controller, "at the end");
             Finish(0, "ran");
         }
     }
-    else if (state == GameController::StatePaused)
+    else if (state == GameController::StatePaused && !SaveTestActive())
     {
         // Out of a pause the scripted start may have made
         controller->SetNextState(GameController::StatePlaying);
@@ -161,7 +192,8 @@ void SweepFrame()
 
 void SweepInput(BoundPad* pad)
 {
-    if (!SweepActive() || !g_Playing)
+    // The save test drives the pause menu itself
+    if (!SweepActive() || !g_Playing || SaveTestActive())
     {
         return;
     }

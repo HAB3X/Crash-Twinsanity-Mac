@@ -493,7 +493,7 @@ void RunTranslated(Vu& vu, Dispatcher& dispatcher, u32 start)
                 lap(g_Times.code);
                 StatsOf(vu).translatedInstructions += vu.executed - executed;
                 StatsOf(vu).entries++;
-                bool next = !ended && dispatcher.Next(vu, st, slots, target);
+                bool next = !ended && !vu.RunawayCheck() && dispatcher.Next(vu, st, slots, target);
                 lap(g_Times.next);
                 if (!next)
                 {
@@ -503,7 +503,7 @@ void RunTranslated(Vu& vu, Dispatcher& dispatcher, u32 start)
                 }
             }
 
-            if (ended)
+            if (ended || Vu::RanAway())
             {
                 break;
             }

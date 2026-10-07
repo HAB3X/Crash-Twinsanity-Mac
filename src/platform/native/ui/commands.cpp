@@ -711,8 +711,8 @@ void TestControls()
     SetOption(OptionInvertMouseY, 0);
     MouseLookForceForTest(false);
 
-    // Hold any button to skip: what's held as the scene begins is ignored, a fresh press held 0.6 s skips, the skip is reported
-    // briefly and the button still held is ignored after, a new scene starts after a gap
+    // Press any button to skip: what's held as the scene begins is ignored, a fresh press held 0.1 s skips, the skip is reported
+    // briefly and the button still held is ignored after, moving doesn't skip, a new scene starts after a gap
     SetOption(OptionSkipCutscenes, 1);
     // A scene's polls, a frame's apart (1/60 s), from a time to a time with the inputs held: whether the last one skipped, and
     // whether any did
@@ -734,22 +734,28 @@ void TestControls()
     constexpr s32 Space = SDL_SCANCODE_SPACE;
     constexpr s32 MouseLeft = 0x10001;
     constexpr s32 PadSouth = 0x20000;
+    constexpr s32 PadDpadUp = 0x20000 + SDL_GAMEPAD_BUTTON_DPAD_UP;
+    const s32 forward = GetBinding(BindMoveForward).keys[0];
     hold({Space}, 1.0f);
     Check(!any, "skip: held as the scene began, ignored");
     hold({}, 1.1f);
-    hold({MouseLeft}, 1.4f);
-    Check(!any && SkipHoldProgress() > 0.4f && SkipHoldProgress() < 0.6f, "skip: a fresh press, the bar half full (%.2f)",
+    hold({MouseLeft}, 1.15f);
+    Check(!any && SkipHoldProgress() > 0.2f && SkipHoldProgress() < 0.8f, "skip: a fresh press, the bar filling (%.2f)",
           SkipHoldProgress());
-    hold({MouseLeft}, 1.75f);
-    Check(any, "skip: held 0.6 s, skipped");
-    hold({MouseLeft}, 2.5f);
-    Check(!hold({MouseLeft}, 2.6f) && SkipHoldProgress() < 0.0f, "skip: still held after, ignored");
-    hold({Space}, 2.9f);
-    Check(!any, "skip: let go of too soon (0.3 s)");
+    hold({MouseLeft}, 1.25f);
+    Check(any, "skip: held 0.1 s, skipped");
+    hold({MouseLeft}, 2.0f);
+    Check(!hold({MouseLeft}, 2.1f) && SkipHoldProgress() < 0.0f, "skip: still held after, ignored");
+    hold({}, 2.2f);
+    hold({Space}, 2.25f);
+    Check(!any, "skip: let go of too soon (0.05 s)");
+    hold({}, 2.3f);
+    hold({forward, PadDpadUp}, 3.5f);
+    Check(!any && forward > 0, "skip: moving (the forward key, the D-pad) doesn't skip");
     // A gap: the next scene
     clock += 1.0f;
     hold({}, clock + 0.1f);
-    hold({PadSouth}, clock + 0.65f);
+    hold({PadSouth}, clock + 0.2f);
     Check(any, "skip: the next scene, a pad button");
     SetOption(OptionSkipCutscenes, 0);
     clock += 1.0f;
@@ -758,7 +764,7 @@ void TestControls()
     Check(!any && SkipHoldProgress() < 0.0f, "skip: off, never");
     SetOption(OptionSkipCutscenes, 1);
     SkipHoldForTest(false, {}, 0.0f);
-    Native::Log("ui self-test: the keyboard and mouse scheme, mouse look and the hold-any-button skip checked");
+    Native::Log("ui self-test: the keyboard and mouse scheme, mouse look and the press-any-button skip checked");
 }
 
 // --dump-button-art DIR: the Xbox's glyphs read from the Xbox disc (and the Switch's made from them) as PNGs, for looking at

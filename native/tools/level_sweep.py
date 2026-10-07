@@ -23,6 +23,8 @@ sys.path.insert(0, str(ROOT / "tools"))
 import dump_texts  # noqa: E402
 import local_config  # noqa: E402
 
+# A run whose snapshots stop for this long is frozen (its threads' stacks saved, hang_bt.txt)
+FREEZE_SECONDS = 25
 APP = ROOT / "build/native/cmake/Crash Twinsanity.app/Contents/MacOS/Crash Twinsanity"
 
 
@@ -55,12 +57,28 @@ def run(chunk, out, seconds, timeout):
                        TWIN_SWEEP_TIMEOUT=str(timeout), HOME=str(home))
     started = time.time()
     with open(folder / "log.txt", "w") as log:
-        try:
-            process = subprocess.run([str(APP), "--headless", "--quiet-stubs", "--snapshots", str(folder)], env=environment,
-                                     stdout=log, stderr=subprocess.STDOUT, timeout=timeout + seconds * 6 + 60)
-            status = process.returncode
-        except subprocess.TimeoutExpired:
-            status = "timeout"
+        process = subprocess.Popen([str(APP), "--headless", "--quiet-stubs", "--snapshots", str(folder)], env=environment,
+                                   stdout=log, stderr=subprocess.STDOUT)
+        status = None
+        limit = started + timeout + seconds * 3 + 30
+        while status is None:
+            try:
+                status = process.wait(timeout=5)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+            frames = sorted(folder.glob("frame_*.png"))
+            last = frames[-1].stat().st_mtime if frames else started
+            # Frozen: snapshots stopped (they're taken every 2 s while the game's frames go on) for FREEZE_SECONDS once there was one
+            frozen = frames and time.time() - last > FREEZE_SECONDS
+            if frozen or time.time() > limit:
+                if frozen:
+                    with open(folder / "hang_bt.txt", "w") as trace:
+                        subprocess.run(["lldb", "--batch", "-p", str(process.pid), "-o", "thread backtrace all -c 30", "-o", "detach"],
+                                       stdout=trace, stderr=subprocess.STDOUT, timeout=120)
+                process.kill()
+                process.wait()
+                status = "frozen" if frozen else "timeout"
     return parse(chunk, folder, status, round(time.time() - started, 1))
 
 
@@ -79,7 +97,8 @@ def parse(chunk, folder, status, wall):
     result = {
         "chunk": chunk,
         "status": status,
-        "outcome": ran.group(1) if ran else ("no character in the chunk" if no_player else "fatal" if fatal else "no end"),
+        "outcome": ran.group(1) if ran else ("no character in the chunk" if no_player else "fatal" if fatal
+                                             else "game over" if re.search(r"sweep: state 18 at", text) and not fatal else "no end"),
         "played": float(ran.group(2)) if ran else None,
         "frames": int(ran.group(3)) if ran else None,
         "load_seconds": round(float(playing.group(1)) - float(loaded.group(1)), 1) if loaded and playing else None,
@@ -99,15 +118,20 @@ def report(results, path):
         result = results[chunk]
         parts = chunk.split("\\")
         world, area, name = (parts[1], parts[2], parts[3]) if len(parts) == 4 else ("", "", chunk)
+        notes = result.get("notes", "")
         if result["outcome"] == "ran":
             status = "OK"
         elif result["outcome"] == "no character in the chunk":
             status = "Entered from a neighbour"
+        elif result["outcome"] == "game over":
+            status = "OK (game over)"
+            notes = notes or "the scripted input lost every life (the deaths and restarts worked); the sweep stops counting play there"
+        elif result["status"] == "frozen":
+            status = "Freeze"
         elif result["fatal"]:
             status = "Crash"
         else:
             status = result["outcome"]
-        notes = result.get("notes", "")
         if result["stray_frees"]:
             notes = (notes + "; " if notes else "") + f"{result['stray_frees']} stray frees"
         if result["fatal"] and not notes and result["outcome"] != "no character in the chunk":

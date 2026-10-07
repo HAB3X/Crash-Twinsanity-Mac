@@ -4,6 +4,11 @@
 //          once the save's file is written, the saved chunk is logged and the run exits 0
 //   load   past the logos and the title to the main menu: "load game", the first slot (and "yes"/"continue" when asked); once
 //          play starts, the chunk it started in is logged, it plays a few seconds and exits 0
+//   autosave   as load, then a checkpoint set at the character and the game's checkpoint autosave (Autosave, as the checkpoint
+//          command does); once the save's file is written and the saving is over, the saved chunk and place are logged, exit 0
+//   restart    from --quick's beach (or $TWIN_SWEEP_LEVEL's chunk): pause, "restart checkpoint"; once play has started again
+//          after the fade, exit 0
+// With $TWIN_SWEEP_LEVEL (and a long $TWIN_SWEEP_SECONDS) save and restart start in that chunk: a later level's save
 // $TWIN_SAVE_TEST_SECONDS: how long to play first (save) or after (load), default 6. It exits 5 when a step takes over 120 s
 #include "ui/bindings.h"
 
@@ -30,6 +35,8 @@ enum class Mode
     None,
     Save,
     Load,
+    Autosave,
+    Restart,
 };
 
 // A menu item wanted: by its text in the text table, or the first save slot (the slots page's items: their text an empty string,
@@ -65,7 +72,11 @@ void ReadSettings()
     g_Read = true;
     const char* mode = std::getenv("TWIN_SAVE_TEST");
     std::string text = mode != nullptr ? mode : "";
-    g_Mode = text == "save" ? Mode::Save : text == "load" ? Mode::Load : Mode::None;
+    g_Mode = text == "save"       ? Mode::Save
+             : text == "load"     ? Mode::Load
+             : text == "autosave" ? Mode::Autosave
+             : text == "restart"  ? Mode::Restart
+                                  : Mode::None;
     if (const char* seconds = std::getenv("TWIN_SAVE_TEST_SECONDS"))
     {
         g_Seconds = static_cast<f32>(std::atof(seconds));
@@ -76,7 +87,11 @@ void ReadSettings()
     {
         g_Wants = {{0x19, false}, {FirstSlot, false}, {0x03, true}};
     }
-    else if (g_Mode == Mode::Load)
+    else if (g_Mode == Mode::Restart)
+    {
+        g_Wants = {{0x186, false}};
+    }
+    else if (g_Mode == Mode::Load || g_Mode == Mode::Autosave)
     {
         g_Wants = {{0x0A, false}, {FirstSlot, false}, {0x03, true}, {0x05, true}};
     }
@@ -241,6 +256,61 @@ void SaveTestFrame()
         Finish(5, why);
     }
 
+    if (g_Mode == Mode::Restart)
+    {
+        switch (g_Phase)
+        {
+        case 0:
+            if (state == GameController::StatePlaying)
+            {
+                if (!g_Playing)
+                {
+                    g_Playing = true;
+                    g_PlayStart = Clock::now();
+                }
+                else if (Since(g_PlayStart) > g_Seconds)
+                {
+                    g_PressStart = true;
+                    g_Phase = 1;
+                    g_StepStart = Clock::now();
+                }
+            }
+
+            break;
+        case 1:
+            if (state == GameController::StatePaused)
+            {
+                g_PressStart = false;
+                g_Phase = 2;
+                g_StepStart = Clock::now();
+                Native::Log("savetest: paused");
+            }
+
+            break;
+        case 2:
+            if (state == GameController::StateFadingOut || state == GameController::StateRestarting)
+            {
+                g_Phase = 3;
+                g_StepStart = Clock::now();
+                Native::Log("savetest: restarting (state %u)", state);
+            }
+
+            break;
+        case 3:
+            if (state == GameController::StatePlaying)
+            {
+                Native::Log("savetest: playing again in %s", controller->progress.startChunk.string != nullptr ? controller->progress.startChunk.string : "?");
+                Finish(0, "restarted from the checkpoint");
+            }
+
+            break;
+        default:
+            break;
+        }
+
+        return;
+    }
+
     if (g_Mode == Mode::Save)
     {
         switch (g_Phase)
@@ -325,15 +395,43 @@ void SaveTestFrame()
                         controller->progress.startChunk.string != nullptr ? controller->progress.startChunk.string : "?",
                         controller->saveController.place);
         }
-        else if (Since(g_PlayStart) > g_Seconds)
+        else if (Since(g_PlayStart) > g_Seconds && g_Mode == Mode::Load)
         {
             Finish(0, "loaded and played");
+        }
+        else if (Since(g_PlayStart) > g_Seconds && g_Mode == Mode::Autosave && g_Phase == 1)
+        {
+            // The checkpoint command's autosave, at a checkpoint set where the character is
+            GameProgress& progress = controller->progress;
+            InstanceContext* character = progress.Instance(progress.play.character);
+            InstanceContext* second = progress.Instance(progress.play.second);
+            Checkpoint* checkpoint = progress.checkpoints[GameProgress::CheckpointRespawn];
+            bool set = character != nullptr && checkpoint->Set(progress.play.pairing, controller->chunkManager, character, character, second);
+            g_SavesBefore = LatestSave();
+            u32 saves = set ? controller->Autosave(checkpoint) : 0;
+            Native::Log("savetest: checkpoint set %d, autosave %u", set ? 1 : 0, saves);
+            if (saves == 0)
+            {
+                Finish(6, "the autosave didn't start (autosave off?)");
+            }
+
+            g_Phase = 2;
+            g_StepStart = Clock::now();
         }
 
         controller->hudDelay = 0;
         break;
     default:
         break;
+    }
+
+    // The autosave over: the file written and the saving back to none
+    if (g_Mode == Mode::Autosave && g_Phase == 2 && LatestSave() > g_SavesBefore &&
+        controller->states.savingStep == GameController::SavingNone && Since(g_StepStart) > 2.0f)
+    {
+        Native::Log("savetest: autosaved chunk %s, place %u", controller->saveController.chunk.string != nullptr ? controller->saveController.chunk.string : "?",
+                    controller->saveController.place);
+        Finish(0, "autosaved");
     }
 }
 

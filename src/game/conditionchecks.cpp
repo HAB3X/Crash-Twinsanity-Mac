@@ -787,16 +787,16 @@ f32 NoOpCutsceneSkippedCondition::Check(GameNode*, BehaviourLevel*, const u32*)
         }
 
         // The cutscene's audio (its dialogue and music on the context slot) stopped with it, rather than playing on over what
-        // follows
-        if (g_Music != nullptr)
+        // follows: once a skip (the skip is reported for a few frames, and a line the next scene starts in them is its own), and
+        // only what plays (a line prepared already is the next scene's)
+        static u32 stoppedFor = 0;
+        if (g_Music != nullptr && stoppedFor != NativeUi::SkipsDone())
         {
-            for (MusicPlayer* player : {g_Music->playing[ContextMusicSlot], g_Music->prepared[ContextMusicSlot]})
+            stoppedFor = NativeUi::SkipsDone();
+            MusicPlayer* player = g_Music->playing[ContextMusicSlot];
+            if (player != nullptr && player->bits.state != MusicPlayer::Stopped && player->bits.state != MusicPlayer::LentToMovie)
             {
-                if (player != nullptr && player->bits.state != MusicPlayer::Stopped &&
-                    player->bits.state != MusicPlayer::LentToMovie)
-                {
-                    StopMusic(player);
-                }
+                StopMusic(player);
             }
         }
 

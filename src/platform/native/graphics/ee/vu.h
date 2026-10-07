@@ -128,6 +128,10 @@ public:
     // VU1's XGKICK: the GIF packet at a data address (a quadword index) sent on path 1
     std::function<void(u32 address)> xgkick;
     void Kick(u32 address);
+    // Whether the run under way went past the runaway limit (vu.cpp's RunawayKicks): the runners stop it
+    static bool RanAway();
+    // The same, with the run's instructions checked against its limit first (the translated runs check between programs)
+    bool RunawayCheck();
     // What runs a program instead of the interpreter (VU1's translations, vu1translate.h)
     std::function<void(u32 start)> runner;
     u32 top = 0;
