@@ -1,0 +1,489 @@
+// What the native options change in the game: applied once they're set and at start-up
+#include "ui/nativeui.h"
+#include "ui/bindings.h"
+
+#include "native.h"
+#include "graphics/presenter.h"
+#include "audio/volumes.h"
+#include "graphics/display.h"
+
+#include "game/clock.h"
+#include "game/controllers.h"
+#include "game/gamecontroller.h"
+#include "game/pads.h"
+#include "game/renderer.h"
+#include "game/sound.h"
+
+#include <SDL3/SDL.h>
+
+#include <algorithm>
+#include <chrono>
+#include <vector>
+
+// The graphics' texture settings (settings.cpp has their weak stand-ins until the graphics define them)
+void NativeGraphicsSetTextureUpscale(int);
+void NativeGraphicsSetTexturePack(bool);
+void NativeGraphicsSetAntiAliasing(int);
+void NativeGraphicsSetVSync(bool);
+
+namespace NativeUi
+{
+namespace
+{
+// The game clock's frames a second, which sizes the frame's work budget (GameTimeHasTimeLeft): main.cpp's PAL 50, NTSC 60
+constexpr s32 PalFramesPerSecond = 50;
+constexpr s32 NtscFramesPerSecond = 60;
+}
+
+void ApplyOption(Option option)
+{
+    switch (option)
+    {
+    case OptionRefresh60:
+    {
+        bool ntsc = IsOn(OptionRefresh60);
+        if (G_GameClockController != nullptr)
+        {
+            G_GameClockController->framesPerSecond = ntsc ? NtscFramesPerSecond : PalFramesPerSecond;
+        }
+
+        NativeGraphics::SetVideoMode(!ntsc);
+        break;
+    }
+    case OptionTextureFilter:
+        NativeGraphicsSetPresentFilter(IsOn(OptionTextureFilter));
+        break;
+    case OptionCrtFilter:
+        NativeGraphicsSetPostFilter(IsOn(OptionCrtFilter) ? 1 : 0);
+        break;
+    case OptionTextureUpscale:
+        NativeGraphicsSetTextureUpscale(GetOption(OptionTextureUpscale));
+        break;
+    case OptionTexturePack:
+        NativeGraphicsSetTexturePack(IsOn(OptionTexturePack));
+        break;
+    case OptionAntiAliasing:
+        NativeGraphicsSetAntiAliasing(GetOption(OptionAntiAliasing));
+        break;
+    case OptionVSync:
+        NativeGraphicsSetVSync(IsOn(OptionVSync));
+        break;
+    case OptionVoiceVolume:
+        ApplyVolumes();
+        break;
+    case OptionNintendoLayout:
+        UpdatePrompts();
+        break;
+    case OptionController:
+        ForgetPromptStyleForTest();
+        break;
+    default:
+        break;
+    }
+}
+
+void ApplyStartOptions()
+{
+    // The game's widescreen setting (the retail game starts with it off; a save's own setting applies once it's loaded)
+    g_WidescreenTv = IsOn(OptionWidescreen) ? 1 : 0;
+    ApplyOption(OptionTextureFilter);
+    ApplyOption(OptionCrtFilter);
+    ApplyOption(OptionTextureUpscale);
+    ApplyOption(OptionTexturePack);
+    ApplyOption(OptionAntiAliasing);
+    ApplyOption(OptionVSync);
+    ApplyVolumes();
+}
+
+void ApplyGameSettingsOnce()
+{
+    // The kept volumes, output type and vibration given to the game once its sound and pads are there (a loaded save's own
+    // settings still apply over them, as on the PS2)
+    static bool applied = false;
+    auto* pads = static_cast<GamePadController*>(G_GamePadController);
+    if (applied || G_GameController == nullptr || pads == nullptr)
+    {
+        return;
+    }
+
+    applied = true;
+    f32 music = static_cast<f32>(GetOption(OptionMusicVolume)) * 0.1f;
+    f32 effects = static_cast<f32>(GetOption(OptionEffectsVolume)) * 0.1f;
+    SetGroupVolume(music, music, MusicGroup);
+    SetGroupVolume(effects, effects, EffectsGroup);
+    SetGroupVolume(effects, effects, SecondEffectsGroup);
+    SetGroupVolume(effects, effects, MovieGroup);
+    SetMusicStereo(static_cast<u32>(GetOption(OptionOutputType)));
+    if (IsOn(OptionVibration))
+    {
+        pads->flags.vibration = 1;
+    }
+    else
+    {
+        pads->DisableVibration();
+    }
+}
+
+// ------------------------------------------------------------------------------------------------------- hold any button to skip
+// The cutscenes' and the movies' skip (the cutscene skip option): any key, mouse button or pad button (not the ones that move, walk
+// or turn the camera, nor the D-pad) held SkipHoldSeconds skips, counted only when it's pressed after the scene began (what was
+// held as it began, running or jumping into it, is ignored until it's let go). A scene is the polls in a row (the skip
+// condition's, a movie's frames'): a gap of SceneGap starts another
+namespace
+{
+using SkipClock = std::chrono::steady_clock;
+// A press (just long enough not to be a stray key bounce): "press any button to skip"
+constexpr f32 SkipHoldSeconds = 0.1f;
+constexpr f32 SceneGap = 0.25f;
+// The skip reported for this long once the hold completes (a scene's scripts may look a few frames later), then what's held is
+// ignored until it's let go (a scene right after isn't skipped too)
+constexpr f32 SkipReported = 0.15f;
+
+struct SkipHold
+{
+    bool scene = false;
+    SkipClock::time_point lastPoll;
+    std::vector<s32> ignored;
+    bool holding = false;
+    SkipClock::time_point since;
+    bool done = false;
+    SkipClock::time_point doneAt;
+    f32 progress = 0.0f;
+};
+SkipHold g_Skip;
+// Skips done (the sweep's check that each one stops its audio)
+u32 g_SkipCount = 0;
+bool g_SkipInputsForced = false;
+std::vector<s32> g_SkipForcedInputs;
+bool g_SkipClockForced = false;
+SkipClock::time_point g_SkipForcedNow;
+
+// Moving, walking, the camera and the D-pad don't skip (steering through a scene with its dialogue would cut it): the keys bound to
+// them, the pad's D-pad
+bool Steers(s32 input)
+{
+    if (input >= 0x20000 + SDL_GAMEPAD_BUTTON_DPAD_UP && input <= 0x20000 + SDL_GAMEPAD_BUTTON_DPAD_RIGHT)
+    {
+        return true;
+    }
+
+    for (u32 function = BindMoveForward; input < 0x10000 && function <= BindRight; function++)
+    {
+        const Binding& binding = GetBinding(function);
+        if (binding.keys[0] == input || binding.keys[1] == input)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// The inputs held that count: keys (SDL scancodes), the mouse's buttons (0x10000 + SDL's), the pad's buttons (0x20000 + SDL's)
+// and triggers (0x30000 + 0 or 1)
+std::vector<s32> HeldInputs()
+{
+    std::vector<s32> held;
+    if (g_SkipInputsForced)
+    {
+        held = g_SkipForcedInputs;
+    }
+    else
+    {
+        int count = 0;
+        const bool* keys = SDL_GetKeyboardState(&count);
+        for (int key = 0; keys != nullptr && key < count; key++)
+        {
+            if (keys[key])
+            {
+                held.push_back(key);
+            }
+        }
+
+        if (SDL_GetMouseFocus() != nullptr || MouseLookActive())
+        {
+            SDL_MouseButtonFlags mouse = SDL_GetMouseState(nullptr, nullptr);
+            for (int button = SDL_BUTTON_LEFT; button <= SDL_BUTTON_X2; button++)
+            {
+                if ((mouse & SDL_BUTTON_MASK(button)) != 0)
+                {
+                    held.push_back(0x10000 + button);
+                }
+            }
+        }
+
+        SDL_Gamepad* gamepad = LastGamepad();
+        if (gamepad != nullptr)
+        {
+            for (int button = 0; button < SDL_GAMEPAD_BUTTON_COUNT; button++)
+            {
+                if (SDL_GetGamepadButton(gamepad, static_cast<SDL_GamepadButton>(button)))
+                {
+                    held.push_back(0x20000 + button);
+                }
+            }
+
+            for (int trigger = 0; trigger < 2; trigger++)
+            {
+                if (SDL_GetGamepadAxis(gamepad, trigger == 0 ? SDL_GAMEPAD_AXIS_LEFT_TRIGGER : SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 16384)
+                {
+                    held.push_back(0x30000 + trigger);
+                }
+            }
+        }
+    }
+
+    held.erase(std::remove_if(held.begin(), held.end(), Steers), held.end());
+    return held;
+}
+
+SkipClock::time_point SkipNow()
+{
+    return g_SkipClockForced ? g_SkipForcedNow : SkipClock::now();
+}
+
+f32 Seconds(SkipClock::time_point from, SkipClock::time_point to)
+{
+    return std::chrono::duration<f32>(to - from).count();
+}
+
+bool Contains(const std::vector<s32>& list, s32 value)
+{
+    return std::find(list.begin(), list.end(), value) != list.end();
+}
+
+bool Contains(const std::vector<const void*>& list, const void* value)
+{
+    return std::find(list.begin(), list.end(), value) != list.end();
+}
+
+// A poll of the skip (a frame of a scene that can be skipped): whether the hold completed
+bool PollSkipHold()
+{
+    SkipHold& skip = g_Skip;
+    SkipClock::time_point now = SkipNow();
+    std::vector<s32> held = HeldInputs();
+    if (!skip.scene || Seconds(skip.lastPoll, now) > SceneGap)
+    {
+        // A scene begins: what's held now doesn't count
+        skip = {};
+        skip.scene = true;
+        skip.ignored = held;
+    }
+
+    skip.lastPoll = now;
+    // What was let go counts again once it's pressed
+    std::vector<s32> stillIgnored;
+    for (s32 input : skip.ignored)
+    {
+        if (Contains(held, input))
+        {
+            stillIgnored.push_back(input);
+        }
+    }
+
+    skip.ignored.swap(stillIgnored);
+    if (skip.done)
+    {
+        if (Seconds(skip.doneAt, now) <= SkipReported)
+        {
+            return true;
+        }
+
+        // Reported: what's held now is ignored until it's let go
+        skip.done = false;
+        skip.holding = false;
+        skip.progress = 0.0f;
+        skip.ignored = held;
+        return false;
+    }
+
+    bool pressed = false;
+    for (s32 input : held)
+    {
+        pressed = pressed || !Contains(skip.ignored, input);
+    }
+
+    if (!pressed)
+    {
+        skip.holding = false;
+        skip.progress = 0.0f;
+        return false;
+    }
+
+    if (!skip.holding)
+    {
+        skip.holding = true;
+        skip.since = now;
+    }
+
+    skip.progress = std::min(1.0f, Seconds(skip.since, now) / SkipHoldSeconds);
+    if (skip.progress >= 1.0f)
+    {
+        skip.done = true;
+        skip.doneAt = now;
+        g_SkipCount++;
+        if (!g_SkipInputsForced)
+        {
+            Native::Log("skip: held %.1f s, skipped", SkipHoldSeconds);
+        }
+        return true;
+    }
+
+    return false;
+}
+}
+
+bool LetterboxShowing();
+
+// A skip as the retail triangle gives it, for the scene's actors that look late: the triangle stays held until the scene is over,
+// so an actor (a character in a long move, a script waiting its turn) that checks its skip rule seconds after the others have
+// still finds it pressed. The report of the hold is a few frames, for the scene's own polls; a poller that names itself (the
+// condition's node) and hasn't seen the skip yet is told once, for SkipCatchUpSeconds after it (or until the cutscene's bars
+// are gone), whenever it looks. A scene polled in a row sees it for SkipReported alone, as before
+struct SkipCatchUp
+{
+    u32 skip = 0;
+    SkipClock::time_point doneAt;
+    bool letterbox = false;
+    std::vector<const void*> told;
+};
+SkipCatchUp g_CatchUp;
+constexpr f32 SkipCatchUpSeconds = 4.0f;
+
+bool SkipHoldComplete(const void* poller)
+{
+    if (!IsOn(OptionSkipCutscenes))
+    {
+        return false;
+    }
+
+    const bool reported = PollSkipHold();
+    SkipCatchUp& catchUp = g_CatchUp;
+    // $TWIN_SKIP_TRACE=1: every poll, who and what it got (finding why a scene's skip isn't seen)
+    static const bool trace = std::getenv("TWIN_SKIP_TRACE") != nullptr;
+    if (trace)
+    {
+        static SkipClock::time_point last = SkipNow();
+        SkipClock::time_point now = SkipNow();
+        Native::Log("skip trace: poll by %p, %.3f s after the last: %s (held %zu, ignored %zu, scene %d, letterbox %d)", poller,
+                    Seconds(last, now), reported ? "skip" : "no", HeldInputs().size(), g_Skip.ignored.size(), g_Skip.scene,
+                    LetterboxShowing());
+        last = now;
+    }
+
+    if (reported)
+    {
+        // The first report of a skip starts its catch-up (the scene's own pollers are told in it)
+        if (catchUp.skip != g_SkipCount)
+        {
+            catchUp = {};
+            catchUp.skip = g_SkipCount;
+            catchUp.doneAt = g_Skip.doneAt;
+            catchUp.letterbox = LetterboxShowing();
+        }
+
+        if (poller != nullptr && !Contains(catchUp.told, poller))
+        {
+            catchUp.told.push_back(poller);
+        }
+
+        return true;
+    }
+
+    // ($TWIN_SKIP_CATCHUP=0: without the catch-up, for comparing)
+    static const bool catchUpOff = std::getenv("TWIN_SKIP_CATCHUP") != nullptr && std::getenv("TWIN_SKIP_CATCHUP")[0] == '0';
+    if (!catchUpOff && poller != nullptr && catchUp.skip != 0 && catchUp.skip == g_SkipCount && !Contains(catchUp.told, poller))
+    {
+        const bool over = Seconds(catchUp.doneAt, SkipNow()) > SkipCatchUpSeconds || (catchUp.letterbox && !LetterboxShowing());
+        if (!over)
+        {
+            catchUp.told.push_back(poller);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// A cutscene's bars (the letterbox) showing
+bool LetterboxShowing()
+{
+    GameController* controller = G_GameController;
+    if (controller == nullptr)
+    {
+        return false;
+    }
+
+    u32 bars = controller->oleg.letterboxBottom.flags.state;
+    return bars == Widget::StateAppearing || bars == Widget::StateShown || bars == Widget::StateDisappearing;
+}
+
+// The game's own skippable scenes (they skip on triangle) skip on any button too while a cutscene's letterbox shows
+bool CutsceneSkipPressed(const void* poller)
+{
+    // (the letterbox's showing is the scene's: a late actor after the bars went is told by the catch-up, which has its own end)
+    if (!IsOn(OptionSkipCutscenes))
+    {
+        return false;
+    }
+
+    if (LetterboxShowing())
+    {
+        return SkipHoldComplete(poller);
+    }
+
+    return poller != nullptr && g_CatchUp.skip != 0 && g_CatchUp.skip == g_SkipCount && SkipHoldComplete(poller);
+}
+
+f32 SkipHoldProgress()
+{
+    // While a scene is polled and a counted button is held (its skip's bar), else none
+    if (!g_Skip.scene || Seconds(g_Skip.lastPoll, SkipNow()) > SceneGap || !g_Skip.holding || !IsOn(OptionSkipCutscenes))
+    {
+        return -1.0f;
+    }
+
+    return g_Skip.done ? 1.0f : g_Skip.progress;
+}
+
+u32 SkipsDone()
+{
+    return g_SkipCount;
+}
+
+bool MovieSkipHeld()
+{
+    return SkipHoldComplete();
+}
+
+void SkipHoldForTest(bool forced, const std::vector<s32>& inputs, f32 seconds)
+{
+    static SkipClock::time_point base = SkipClock::now();
+    g_SkipInputsForced = forced;
+    g_SkipForcedInputs = inputs;
+    g_SkipClockForced = forced;
+    g_SkipForcedNow = base + std::chrono::duration_cast<SkipClock::duration>(std::chrono::duration<f32>(seconds));
+    if (!forced)
+    {
+        g_Skip = {};
+    }
+}
+
+void ApplyVolumes()
+{
+    // The player's volumes go on top of the game's own (the music and effects volumes are the game's groups, which its options
+    // set): the voices' alone is the native option's
+    NativeAudioSetVolumes(1.0f, 1.0f, static_cast<f32>(GetOption(OptionVoiceVolume)) / 10.0f);
+}
+
+f32 CameraShakeScale()
+{
+    return IsOn(OptionCameraShake) ? 1.0f : 0.0f;
+}
+
+s32 FramesPerSecond(s32 retail)
+{
+    return IsOn(OptionRefresh60) ? NtscFramesPerSecond : retail;
+}
+}
