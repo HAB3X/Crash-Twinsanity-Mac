@@ -228,7 +228,11 @@ void Build()
     display.push_back(Toggle(TextCrt, TextDescCrt, OptionCrtFilter));
     display.push_back(Toggle(TextTexturePack, TextDescTexturePack, OptionTexturePack));
     display.push_back(OptionChoice(TextUpscale, TextDescUpscale, OptionTextureUpscale, {0, TextScale2, TextScale4}));
-    display.push_back(OptionChoice(TextAntiAliasing, TextDescAntiAliasing, OptionAntiAliasing, {0, TextScale2, TextScale4}));
+    display.push_back(Choice(
+        // Off, FXAA on the shown picture, and supersampling (the render scale 2 or 4 times, up to 8x the PS2's)
+        TextAntiAliasing, TextDescAntiAliasing, [] { return GetOption(OptionAntiAliasing); },
+        [](s32 value) { SetOption(OptionAntiAliasing, value); }, 3,
+        [](s32 value) { return value == 0 ? Text(0) : std::string(value == 1 ? "FXAA" : value == 2 ? "SSAA 2x" : "SSAA 4x"); }));
     display.push_back(Toggle(TextVSync, TextDescVSync, OptionVSync));
     display.push_back(OptionChoice(TextRenderDistance, TextDescRenderDistance, OptionRenderDistance,
                                    {TextDistUnlimited, TextDistLong, TextDistMedium, TextDistRetail, TextDistShort}));

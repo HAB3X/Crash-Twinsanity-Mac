@@ -63,6 +63,41 @@ struct PixelInput
 void Gs::SetUpState(DrawState& state, const Vertex*)
 {
     RegPrim attributes = prmodecont_ != 0 ? prim_ : prmode_;
+    // $TWIN_AA1_STATS=1: the primitives that ask for the GS's edge anti-aliasing (PRIM's AA1), by type, at exit
+    static const bool aa1Stats = std::getenv("TWIN_AA1_STATS") != nullptr;
+    if (aa1Stats)
+    {
+        static u64 total = 0;
+        static u64 withAa1[8] = {};
+        static bool registered = false;
+        if (!registered)
+        {
+            registered = true;
+            std::atexit([] {
+                std::fprintf(stderr, "aa1: %llu primitives, with AA1: point %llu line %llu strip %llu triangle %llu tri-strip %llu fan %llu sprite %llu\n",
+                             static_cast<unsigned long long>(total), static_cast<unsigned long long>(withAa1[0]),
+                             static_cast<unsigned long long>(withAa1[1]), static_cast<unsigned long long>(withAa1[2]),
+                             static_cast<unsigned long long>(withAa1[3]), static_cast<unsigned long long>(withAa1[4]),
+                             static_cast<unsigned long long>(withAa1[5]), static_cast<unsigned long long>(withAa1[6]));
+            });
+        }
+
+        total++;
+        if (attributes.aa1 != 0)
+        {
+            withAa1[prim_.prim & 7]++;
+        }
+
+        if (total % 50000 == 0)
+        {
+            std::fprintf(stderr, "aa1: %llu primitives, with AA1: line %llu strip %llu triangle %llu tri-strip %llu fan %llu sprite %llu\n",
+                         static_cast<unsigned long long>(total), static_cast<unsigned long long>(withAa1[1]),
+                         static_cast<unsigned long long>(withAa1[2]), static_cast<unsigned long long>(withAa1[3]),
+                         static_cast<unsigned long long>(withAa1[4]), static_cast<unsigned long long>(withAa1[5]),
+                         static_cast<unsigned long long>(withAa1[6]));
+        }
+    }
+
     const Context& context = context_[attributes.ctxt];
     state.context = &context;
     state.frameShadow = nullptr;

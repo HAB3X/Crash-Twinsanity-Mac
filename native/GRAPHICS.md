@@ -96,7 +96,7 @@ The PS2 build stays the same executable (checked with `tools/build.py` and `cmp`
 | XGKICK | The GIF reads VU1's memory over the next cycles | The whole packet at once | None for programs that double buffer their output (the game's do) |
 | VU floats | VU arithmetic | Host IEEE single precision with round toward zero, denormals and overflow handled as the VU does (PCSX2's model) | The last bit of some results can differ (the VU's multiplier isn't exactly IEEE) |
 | Rasterisation | The GS's DDA | Edge functions with the GS's sampling and fill rules; attributes interpolated in double precision, colours with 7 fraction bits, texture coordinates 16.16 with 4 bit bilinear weights | A pixel's colour or texel can differ by one step at some edges |
-| Anti-aliasing (PRIM's AA1) | Coverage alpha on edges | Not done | The game only sets it through shader type 0's settings |
+| Anti-aliasing (PRIM's AA1) | Coverage alpha on edges | Not done | Never asked for: `TWIN_AA1_STATS=1` counted 0 of 90 million primitives (the beach, the school hub, the high seas) with AA1 set |
 | SendToVu0 | VU0's copier program takes eight quadwords at a time | Copied straight into VU0's memory | None |
 | The display | Interlaced fields; the two circuits read the same frame a line apart and are blended 50/50 | The whole frame shown progressively; the circuits merged with their offset counted in frame lines (an offset of one field line is none, as PCSX2 shows it) | No interlacing flicker or deflicker blur |
 | Scaling to the window | The TV | Linear (or nearest with `TWIN_DISPLAY_FILTER=nearest`) | Softer or blockier than a TV |

@@ -46,7 +46,7 @@ constexpr OptionInfo Infos[OptionCount] = {
     {OptionMouse, "mouse", 1, 1},
     {OptionTextureUpscale, "texture_upscale", 0, 2},
     {OptionTexturePack, "texture_pack", 1, 1},
-    {OptionAntiAliasing, "anti_aliasing", 0, 2},
+    {OptionAntiAliasing, "anti_aliasing", 0, 3},
     {OptionVSync, "vsync", 1, 1},
     {OptionRenderDistance, "render_distance", 0, 4},
     {OptionMusicVolume, "music_volume", 10, 10},

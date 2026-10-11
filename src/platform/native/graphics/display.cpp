@@ -561,6 +561,8 @@ namespace
 std::atomic<int> g_RendererWanted{-1};
 // The internal resolution: 4x by default (the UI's resolution setting sets it at start-up), sharp as the overlay's menus
 std::atomic<int> g_ScaleSetting{4};
+// The supersampling the anti-aliasing option asks for (1, 2 or 4): the internal scale is this many times the setting's
+std::atomic<int> g_Supersample{1};
 // The window's height in pixels, as the main thread last saw it (the scale setting 0 goes by it)
 std::atomic<int> g_WindowPixelHeight{0};
 }
@@ -613,6 +615,7 @@ void ApplyGraphicsSettings()
         scale = static_cast<u32>(std::clamp((height + 256) / 512, 1, 8));
     }
 
+    scale = std::min(scale * static_cast<u32>(g_Supersample.load()), 8u);
     if (wanted == 1 && !HardwareRendererActive())
     {
         if (StartHardwareRenderer(scale))
@@ -686,12 +689,22 @@ bool NativeGraphicsSetTexturePack(bool on)
 
 bool NativeGraphicsSetAntiAliasing(int mode)
 {
-    if (mode < 0 || mode > 1)
+    // 0 off, 1 FXAA, 2 and 3 supersampling (the internal resolution 2 and 4 times what's asked for, up to 8 times the PS2's: every
+    // render target is read as a texture as well, so multisampled targets would have to be resolved at each read; the picture
+    // shown is the larger one made smaller)
+    if (mode < 0 || mode > 3)
     {
         return false;
     }
 
-    g_Presenter.antiAliasing = mode;
+    g_Presenter.antiAliasing = mode == 1 ? 1 : 0;
+    const int supersample = mode == 2 ? 2 : mode == 3 ? 4 : 1;
+    if (supersample != g_Supersample)
+    {
+        g_Supersample = supersample;
+        NativeGraphics::RenderCall([] { NativeGraphics::ApplyGraphicsSettings(); });
+    }
+
     return true;
 }
 
