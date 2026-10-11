@@ -48,6 +48,7 @@ constexpr OptionInfo Infos[OptionCount] = {
     {OptionTexturePack, "texture_pack", 1, 1},
     {OptionAntiAliasing, "anti_aliasing", 0, 2},
     {OptionVSync, "vsync", 1, 1},
+    {OptionRenderDistance, "render_distance", 0, 4},
     {OptionMusicVolume, "music_volume", 10, 10},
     {OptionEffectsVolume, "effects_volume", 10, 10},
     {OptionOutputType, "output_type", 1, 2},

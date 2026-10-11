@@ -221,6 +221,13 @@ void SweepInput(BoundPad* pad)
     s32 cycle = static_cast<s32>(t / 4.0f);
     f32 inCycle = t - static_cast<f32>(cycle) * 4.0f;
     f32 angle = static_cast<f32>(cycle) * 1.745f;
+    // $TWIN_SWEEP_STICK=DEGREES: the stick held in one direction instead (a walk in a line from the start)
+    static const char* fixedStick = std::getenv("TWIN_SWEEP_STICK");
+    if (fixedStick != nullptr)
+    {
+        angle = static_cast<f32>(std::atof(fixedStick)) * 3.14159265f / 180.0f;
+    }
+
     pad->leftX = static_cast<u8>(128.0f + std::sin(angle) * 127.0f);
     pad->leftY = static_cast<u8>(128.0f - std::cos(angle) * 127.0f);
     if (inCycle < 1.0f)

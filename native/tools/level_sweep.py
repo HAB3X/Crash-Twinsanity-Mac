@@ -55,6 +55,8 @@ def run(chunk, out, seconds, timeout, skip=None):
     home.mkdir(exist_ok=True)
     environment = dict(os.environ, TWINSANITY_AUDIO="off", TWIN_SWEEP_LEVEL=chunk, TWIN_SWEEP_SECONDS=str(seconds),
                        TWIN_SWEEP_TIMEOUT=str(timeout), HOME=str(home))
+    if os.environ.get("TWIN_SWEEP_STICK") is not None:
+        environment["TWIN_SWEEP_STICK"] = os.environ["TWIN_SWEEP_STICK"]
     if skip is not None:
         # The cutscene skip pressed (ui/sweep.cpp): from this many seconds of play, a second every this many
         environment.update(TWIN_SWEEP_SKIP_AT=str(skip[0]), TWIN_SWEEP_SKIP_EVERY=str(skip[1]))

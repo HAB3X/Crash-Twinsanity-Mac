@@ -1,4 +1,5 @@
 // What the native options change in the game: applied once they're set and at start-up
+#include "renderdistance.h"
 #include "ui/nativeui.h"
 #include "ui/bindings.h"
 
@@ -68,6 +69,14 @@ void ApplyOption(Option option)
     case OptionVSync:
         NativeGraphicsSetVSync(IsOn(OptionVSync));
         break;
+    case OptionRenderDistance:
+        {
+            // ($TWIN_RENDER_DISTANCE=0-4 overrides the option, for comparing in the sweep)
+            const char* forced = std::getenv("TWIN_RENDER_DISTANCE");
+            Native::SetRenderDistance(forced != nullptr ? static_cast<u32>(std::atoi(forced))
+                                                        : static_cast<u32>(GetOption(OptionRenderDistance)));
+        }
+        break;
     case OptionVoiceVolume:
         ApplyVolumes();
         break;
@@ -92,6 +101,7 @@ void ApplyStartOptions()
     ApplyOption(OptionTexturePack);
     ApplyOption(OptionAntiAliasing);
     ApplyOption(OptionVSync);
+    ApplyOption(OptionRenderDistance);
     ApplyVolumes();
 }
 

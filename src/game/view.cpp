@@ -1,4 +1,7 @@
 #include "game/view.h"
+#ifdef TWIN_NATIVE
+#include "renderdistance.h"
+#endif
 
 #include "game/camerarig.h"
 #include "game/controllers.h"
@@ -25,6 +28,10 @@ void RenderView::SetProjection(CameraLensNode* lens)
 {
     f32 farPlane = lens->farPlane;
     f32 nearPlane = lens->nearPlane;
+#ifdef TWIN_NATIVE
+    // The render distance option (renderdistance.h)
+    farPlane = farPlane * Native::RenderDistanceScale();
+#endif
     projection = {};
     s32 half = static_cast<s32>(static_cast<f32>(lens->fov) * 0.5f);
     f32 cotangent = 1.0f / TanOfAngle(&half);

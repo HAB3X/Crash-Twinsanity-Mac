@@ -230,6 +230,8 @@ void Build()
     display.push_back(OptionChoice(TextUpscale, TextDescUpscale, OptionTextureUpscale, {0, TextScale2, TextScale4}));
     display.push_back(OptionChoice(TextAntiAliasing, TextDescAntiAliasing, OptionAntiAliasing, {0, TextScale2, TextScale4}));
     display.push_back(Toggle(TextVSync, TextDescVSync, OptionVSync));
+    display.push_back(OptionChoice(TextRenderDistance, TextDescRenderDistance, OptionRenderDistance,
+                                   {TextDistUnlimited, TextDistLong, TextDistMedium, TextDistRetail, TextDistShort}));
     display.push_back(Action(GameTextCentreScreen, TextDescScreenPosition, [] { OpenScreenPosition(); }));
 
     std::vector<Row>& audio = g_Rows[TabAudio];
@@ -667,6 +669,8 @@ void ResetTab(u32 tab)
         SetOption(OptionTexturePack, 0);
         SetOption(OptionAntiAliasing, 0);
         SetOption(OptionVSync, 1);
+        SetOption(OptionRenderDistance, 0);
+        ApplyOption(OptionRenderDistance);
         SetOption(OptionCrtFilter, 0);
         SetOption(OptionRefresh60, 0);
         break;

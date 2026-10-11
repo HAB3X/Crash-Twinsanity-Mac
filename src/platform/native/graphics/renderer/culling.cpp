@@ -1,3 +1,4 @@
+#include "renderdistance.h"
 #include "renderer.h"
 
 #include "../ee/vu.h"
@@ -294,6 +295,8 @@ void ClipBox(const Matrix4x4* view, const Box* box, u32* flags)
 
 void SetViewFrustum(f32 near, f32 far, f32 aspect, const s32* fieldOfView)
 {
+    // The render distance option (renderdistance.h)
+    far = std::max(far * Native::RenderDistanceScale(), near + 1.0f);
     s32 angle = *fieldOfView;
     ViewFrustumPlanes(near, far, aspect, 1.0f, g_ViewPlanes, &angle);
     angle = *fieldOfView;

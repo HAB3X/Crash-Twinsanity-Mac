@@ -1,3 +1,4 @@
+#include "renderdistance.h"
 #include "renderer.h"
 
 #include "game/clock.h"
@@ -746,7 +747,18 @@ void SkinRestartAnimations(Skin* skin)
 
 RigidModel* LodMeshAt(Lod* lod, u32 distance)
 {
-    if (distance < lod->nearest || lod->farthest < distance)
+    // The render distance option: the cut-off past the farthest distance scaled, or gone (the farthest mesh then keeps drawing)
+    u32 farthest = lod->farthest;
+    if (Native::RenderDistanceUnlimited())
+    {
+        farthest = 0xFFFFFFFFu;
+    }
+    else if (Native::RenderDistanceScale() != 1.0f)
+    {
+        farthest = static_cast<u32>(static_cast<f32>(farthest) * Native::RenderDistanceScale());
+    }
+
+    if (distance < lod->nearest || farthest < distance)
     {
         return nullptr;
     }
