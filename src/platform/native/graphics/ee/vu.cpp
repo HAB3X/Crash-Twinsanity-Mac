@@ -1131,6 +1131,13 @@ constexpr u64 RunawayKicks = 20000;
 constexpr u64 RunawayInstructions = 10000000;
 thread_local u64 g_KicksThisRun = 0;
 thread_local u64 g_RunExecuted = 0;
+// The record the VU1's triangle loop is in (address 10, word x), checked every so often: a run that stays in one record for a
+// million instructions or more is a runaway long before the run's limit (a frame's records come to under five million in all)
+thread_local u32 g_LastRecord = ~0u;
+thread_local u64 g_RecordSince = 0;
+thread_local u64 g_NextRecordCheck = 0;
+constexpr u64 RecordCheckEvery = 50000;
+constexpr u64 RecordRunawayInstructions = 600000;
 // The interpreter's last program counters (a runaway's loop, $TWIN_VU_RUNAWAY_DUMP)
 thread_local u32 g_PcRing[8192];
 thread_local u32 g_PcRingAt = 0;
@@ -1166,6 +1173,24 @@ bool Vu::RanAway()
 
 bool Vu::RunawayCheck()
 {
+    if (!g_RanAway && index_ == 1 && (runStart == 0 || runStart == 0x0A) && executed >= g_NextRecordCheck)
+    {
+        g_NextRecordCheck = executed + RecordCheckEvery;
+        u32 record = 0;
+        std::memcpy(&record, data_ + 10 * 16, sizeof(record));
+        record &= 0xFFFF;
+        if (record != g_LastRecord)
+        {
+            g_LastRecord = record;
+            g_RecordSince = executed;
+        }
+        else if (executed - g_RecordSince > RecordRunawayInstructions)
+        {
+            StopRunaway(index_, runStart, "stayed in one record for 600,000 instructions");
+            g_RanAway = true;
+        }
+    }
+
     if (!g_RanAway && executed - g_RunExecuted > RunawayInstructions)
     {
         StopRunaway(index_, runStart, "ran 10 million instructions");
@@ -1208,20 +1233,6 @@ bool Vu::RunawayCheck()
 
 void Vu::Run(u32 start)
 {
-    if (!timing)
-    {
-        if (runner)
-        {
-            runner(start);
-        }
-        else
-        {
-            RunInterpreted(start);
-        }
-
-        return;
-    }
-
     auto began = std::chrono::steady_clock::now();
     if (runner)
     {
@@ -1232,7 +1243,40 @@ void Vu::Run(u32 start)
         RunInterpreted(start);
     }
 
-    runNanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - began).count();
+    // A run of VU1's record chain (the kernel at 0, which calls each record's routine and goes on to the next) that went away in
+    // one record's routine (a model whose triangle needs the clipper, drawn by a record without a clipping routine: the PS2 would
+    // hang): that record dropped and the chain gone on with from the kernel's step to the next one, so the frame's other records
+    // are drawn. The triangle loop keeps the record it's working on at address 10 (word x)
+    if (index_ == 1 && start == 0)
+    {
+        for (u32 dropped = 0; g_RanAway && dropped < 64; dropped++)
+        {
+            u32 record = 0;
+            std::memcpy(&record, data_ + 10 * 16, sizeof(record));
+            record &= 0xFFFF;
+            if (record == 0 || record >= 0x400)
+            {
+                break;
+            }
+
+            static u32 reported = 0;
+            if (reported++ < 4)
+            {
+                u32 routine = 0;
+                std::memcpy(&routine, data_ + record * 16, sizeof(routine));
+                std::fprintf(stderr, "graphics: VU1 record at %#x (routine %#x) dropped: its run didn't end\n", record, routine & 0xFFFF);
+            }
+
+            vi[14] = static_cast<u16>(record);
+            vi[15] = 0x0A;
+            RunInterpreted(0x0A);
+        }
+    }
+
+    if (timing)
+    {
+        runNanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - began).count();
+    }
 }
 
 void Vu::Kick(u32 address)
@@ -1290,6 +1334,9 @@ void Vu::BeginMicro(VuMicroState& state, u32 start)
     state.pc = start & (codeSize_ - 1);
     runStart = state.pc;
     g_RunExecuted = executed;
+    g_LastRecord = ~0u;
+    g_RecordSince = executed;
+    g_NextRecordCheck = executed + RecordCheckEvery;
 }
 
 // The pipelines' finished results made visible
