@@ -14,6 +14,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <set>
+#include <string>
 
 #pragma STDC FENV_ACCESS ON
 #pragma clang fp contract(off)
@@ -1129,6 +1131,9 @@ constexpr u64 RunawayKicks = 20000;
 constexpr u64 RunawayInstructions = 10000000;
 thread_local u64 g_KicksThisRun = 0;
 thread_local u64 g_RunExecuted = 0;
+// The interpreter's last program counters (a runaway's loop, $TWIN_VU_RUNAWAY_DUMP)
+thread_local u32 g_PcRing[8192];
+thread_local u32 g_PcRingAt = 0;
 thread_local bool g_RanAway = false;
 
 void StopRunaway(u32 unit, u32 start, const char* why)
@@ -1164,12 +1169,33 @@ bool Vu::RunawayCheck()
     if (!g_RanAway && executed - g_RunExecuted > RunawayInstructions)
     {
         StopRunaway(index_, runStart, "ran 10 million instructions");
-        // $TWIN_VU_RUNAWAY_DUMP=FILE: the unit's data memory as the runaway run left it (finding what it was given)
+        // $TWIN_VU_RUNAWAY_DUMP=FILE: the unit's data memory as the runaway run left it (finding what it was given), and with the
+        // interpreter (TWIN_VU1=interpret) the loop's program counters: each one once, in the order of the last cycle
         if (const char* dump = std::getenv("TWIN_VU_RUNAWAY_DUMP"))
         {
+            std::string text;
+            std::set<u32> seen;
+            for (u32 i = 0; i < 8192; i++)
+            {
+                u32 pc = g_PcRing[(g_PcRingAt + i) & 8191];
+                if (seen.insert(pc).second)
+                {
+                    char item[16];
+                    std::snprintf(item, sizeof(item), "%x ", pc);
+                    text += item;
+                }
+            }
+
+            std::fprintf(stderr, "graphics: the runaway's program counters (oldest first): %s\n", text.c_str());
             if (FILE* f = std::fopen(dump, "wb"))
             {
                 std::fwrite(data(), 1, 0x4000, f);
+                std::fclose(f);
+            }
+
+            if (FILE* f = std::fopen((std::string(dump) + ".code").c_str(), "wb"))
+            {
+                std::fwrite(code(), 8, codeSize_, f);
                 std::fclose(f);
             }
         }
@@ -1326,6 +1352,8 @@ bool Vu::StepMicro(VuMicroState& state)
     {
         return false;
     }
+
+    g_PcRing[g_PcRingAt++ & 8191] = state.pc;
 
     Pipelines& pipes = state.pipes;
     Pending& pending = state.pending;
