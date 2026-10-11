@@ -193,3 +193,22 @@ as the native stack and heap leftovers aren't the PS2's (and one read was out of
 | `ConstructSkidMarks` (`skidmarks.cpp`) | The last point and the strip's two colours as the heap had them | 0 |
 | Cmd48 DropAttachedObject, the attachments' launch (`commandsattach.cpp`, `attachments.cpp`) | A velocity of the stack's leftovers | None |
 | Particle trail kind 5 (`particletrails.cpp`) | Compares a vector it never sets | None |
+
+## Intel Macs (x86-64): where it stands
+
+- Builds: `cmake -S native -B build/native/cmake-x86_64 -G Ninja -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_PREFIX_PATH=<an x86-64 SDL3>`
+  with FFmpeg from `native/tools/build_ffmpeg.sh x86_64`. It compiles and links; `--selftest-lowmemory` passes under Rosetta.
+- Doesn't get through a level load yet. Under Rosetta every level stopped with a SIGBUS in `LoadLinkedChunks` (a virtual call
+  jumping into data), and the run before it read the fields (offsets 0x30, 0x38, 0x40) of a null `ChunkLoader` through the low
+  memory, which the arm64 build never does: the two builds part earlier in the chunk loading. Candidates, none checked: a
+  float to integer conversion out of range (the PS2's and arm64's saturate, x86's gives 0x80000000), an integer division by zero
+  (x86 traps, the PS2's and arm64's give a value), or an uninitialised read. Debugging it needs a debugger, and attaching one
+  to a Rosetta process wedged Rosetta on the machine it was tried on (every x86-64 program hung until a restart): use a real
+  Intel Mac, or `TWIN_LOWMEM_TRACE=1` and logging only.
+
+## Why anti-aliasing is supersampling, not MSAA
+
+The hardware renderer does the GS's alpha blending in the fragment shader, reading a copy of the destination (the GS's blend
+modes and its 8 bit arithmetic aren't GL's), and every render target is also a texture other draws and conversions read. A
+multisampled target would have to be resolved before each of those reads, at each blended batch, which costs more than the
+samples save. The internal scale already is supersampling (the option's 2x and 4x multiply it, to 8x the PS2's).
