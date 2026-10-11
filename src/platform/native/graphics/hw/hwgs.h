@@ -59,6 +59,8 @@ bool HardwareCopyDisplay(u32 slot, void* drawnFence, ShownTexture* shown);
 // filtering (0 the game's, 1 bilinear, 2 trilinear and anisotropic)
 void HardwareSetDither(int mode);
 void HardwareSetFiltering(int mode);
+// The texture upscale: 0 off, 1 2x, 2 4x (a bicubic pass over the textures decoded from data the CPU wrote)
+void HardwareSetUpscale(int mode);
 
 // Statistics: draws done by the GPU and left to the software rasteriser since the start, and the last reason for leaving one
 struct HardwareStats

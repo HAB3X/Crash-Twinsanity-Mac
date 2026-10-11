@@ -1164,6 +1164,16 @@ bool Vu::RunawayCheck()
     if (!g_RanAway && executed - g_RunExecuted > RunawayInstructions)
     {
         StopRunaway(index_, runStart, "ran 10 million instructions");
+        // $TWIN_VU_RUNAWAY_DUMP=FILE: the unit's data memory as the runaway run left it (finding what it was given)
+        if (const char* dump = std::getenv("TWIN_VU_RUNAWAY_DUMP"))
+        {
+            if (FILE* f = std::fopen(dump, "wb"))
+            {
+                std::fwrite(data(), 1, 0x4000, f);
+                std::fclose(f);
+            }
+        }
+
         g_RanAway = true;
     }
 

@@ -8,6 +8,7 @@
 // - the packed word: PSM | TW << 6 | TH << 10 | (TEXA's TA0 << 15 | AEM << 23 | TA1 << 24 for 24 and 16 bit formats); old names'
 //   bit 14 is ignored
 
+#include "bc7.h"
 #include "replace.h"
 
 #define XXH_INLINE_ALL
@@ -328,7 +329,9 @@ bool LoadDds(const std::string& path, ReplacementImage* image)
         {
             u32 dxgi = read32(128);
             at = 148;
-            format = (dxgi == 71 || dxgi == 72) ? 1 : (dxgi == 74 || dxgi == 75) ? 2 : (dxgi == 77 || dxgi == 78) ? 3 : 0;
+            // BC1, BC2, BC3 (UNORM and sRGB) and BC7 (4: decoded by hw/bc7.cpp)
+            format = (dxgi == 71 || dxgi == 72) ? 1 : (dxgi == 74 || dxgi == 75) ? 2 : (dxgi == 77 || dxgi == 78) ? 3
+                   : (dxgi == 98 || dxgi == 99) ? 4 : 0;
             if (format == 0)
             {
                 std::fprintf(stderr, "graphics: %s: a DDS format not read yet (DXGI %u)\n", path.c_str(), dxgi);
@@ -360,7 +363,15 @@ bool LoadDds(const std::string& path, ReplacementImage* image)
             {
                 const u8* block = &data[at + (static_cast<size_t>(by) * blocksWide + bx) * blockBytes];
                 u32 texels[16];
-                DecodeColourBlock(format == 1 ? block : block + 8, texels, format == 1);
+                if (format == 4)
+                {
+                    DecodeBc7Block(block, texels);
+                }
+                else
+                {
+                    DecodeColourBlock(format == 1 ? block : block + 8, texels, format == 1);
+                }
+
                 if (format == 2)
                 {
                     for (u32 i = 0; i < 16; i++)

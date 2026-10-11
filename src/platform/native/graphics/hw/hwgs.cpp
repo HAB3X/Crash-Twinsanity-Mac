@@ -963,6 +963,42 @@ void main()
 }
 )";
 
+// The texture upscale: a texture's texels read at S times the size with Catmull-Rom's cubic (sharper than the bilinear a
+// magnified texture gets), the edges' texels repeated
+constexpr const char* UpscaleSource = R"(#version 330 core
+uniform sampler2D source;
+uniform vec2 sourceSize;
+uniform float scale;
+out vec4 colour;
+vec4 Fetch(ivec2 p)
+{
+    return texelFetch(source, clamp(p, ivec2(0), ivec2(sourceSize) - 1), 0);
+}
+vec4 Weights(float t)
+{
+    float t2 = t * t;
+    float t3 = t2 * t;
+    return vec4(-0.5 * t3 + t2 - 0.5 * t, 1.5 * t3 - 2.5 * t2 + 1.0, -1.5 * t3 + 2.0 * t2 + 0.5 * t, 0.5 * t3 - 0.5 * t2);
+}
+void main()
+{
+    vec2 position = gl_FragCoord.xy / scale - 0.5;
+    vec2 floored = floor(position);
+    ivec2 base = ivec2(floored);
+    vec4 wx = Weights(position.x - floored.x);
+    vec4 wy = Weights(position.y - floored.y);
+    vec4 sum = vec4(0.0);
+    for (int y = 0; y < 4; y++)
+    {
+        vec4 row = Fetch(base + ivec2(-1, y - 1)) * wx.x + Fetch(base + ivec2(0, y - 1)) * wx.y +
+                   Fetch(base + ivec2(1, y - 1)) * wx.z + Fetch(base + ivec2(2, y - 1)) * wx.w;
+        sum += row * wy[y];
+    }
+
+    colour = clamp(sum, 0.0, 1.0);
+}
+)";
+
 struct Program
 {
     GLuint id = 0;
@@ -1076,6 +1112,9 @@ struct GpuTexture
     u32 checkedEpoch = 0;
     // A replacement (a pack's texture) looked for when the texture was last decoded whole from the CPU's data; 0: none
     GLuint replacement = 0;
+    // The texture upscaled (the texture upscale option, native/GRAPHICS.md), from its own tiles: 0 none, and the scale it was made at
+    GLuint upscaled = 0;
+    u32 upscaledScale = 0;
     // The texture drawn with (its own, its replacement, or a decode of the same content made for another place)
     GLuint shown = 0;
     // Shown from the content cache: good while every page is older than this and no target holds a newer copy (0: not)
@@ -1089,6 +1128,9 @@ struct ContentTexture
 {
     GLuint id = 0;
     GLuint replacement = 0;
+    // Upscaled (see GpuTexture::upscaled)
+    GLuint upscaled = 0;
+    u32 upscaledScale = 0;
 };
 
 GLuint CompileShader(GLenum kind, const std::string& source)
@@ -1140,6 +1182,8 @@ GLuint LinkProgram(GLuint vertex, GLuint fragment, bool dualSource)
 class HwGs : public Gs::Backend
 {
 public:
+    // The upscaled textures let go of (the texture upscale option changed)
+    void DropUpscaled();
     explicit HwGs(Gs::Gs& gs, u32 scale) : gs_(gs), scale_(scale) {}
     ~HwGs() override;
 
@@ -1255,6 +1299,7 @@ private:
     // Textures decoded on the GPU, the decode's program and framebuffer, the CLUT as a texture
     std::unordered_map<GpuTextureKey, GpuTexture, GpuTextureKeyHash> gpuTextures_;
     GLuint decodeProgram_ = 0;
+    GLuint upscaleProgram_ = 0;
     GLuint decodeFbo_ = 0;
     // TWIN_HW_STATS: the render passes begun (a draw into another framebuffer or attachment than the last), by cause
     u64 passIdentity_ = 0;
@@ -1317,6 +1362,10 @@ private:
     void DecodePasses(const Gs::Gs::DrawState& state, GLuint texture, const Rect* rects, u32 levels);
     u64 ContentHash(const Gs::Gs::DrawState& state);
     GLuint MakeLevels(const Gs::Gs::DrawState& state);
+    // A texture's level 0 upscaled (a new texture of scale times the size, mipmapped), the upscaled textures let go of (the option
+    // changed), and the scale wanted for a texture of a size (0: not upscaled)
+    GLuint MakeUpscaled(GLuint source, u32 width, u32 height, u32 scale);
+    u32 UpscaleFor(u32 width, u32 height) const;
     std::unordered_map<u64, ContentTexture> contents_;
     void SyncMem(const Gs::PageSet& pages);
     void SyncCpu(const Gs::PageSet& pages);
@@ -1361,6 +1410,8 @@ f32 VertexNudge()
 }
 int g_DitherMode = 2;
 int g_FilterMode = 0;
+// The texture upscale option: 0 off, 1 2x, 2 4x
+int g_TextureUpscale = 0;
 
 HwGs::~HwGs()
 {
@@ -1929,6 +1980,8 @@ void HwGs::InitMemory()
                                    false);
     decodeProgram_ = LinkProgram(CompileShader(GL_VERTEX_SHADER, MemRectVertexSource),
                                  CompileShader(GL_FRAGMENT_SHADER, header + MemCommonSource + DecodeSource), false);
+    upscaleProgram_ = LinkProgram(CompileShader(GL_VERTEX_SHADER, MemRectVertexSource), CompileShader(GL_FRAGMENT_SHADER, UpscaleSource),
+                                  false);
     gl.GenFramebuffers(1, &decodeFbo_);
     gl.GenTextures(1, &clutTexture_);
     gl.BindTexture(GL_TEXTURE_2D, clutTexture_);
@@ -2187,11 +2240,25 @@ GLuint HwGs::DecodeOnGpu(const Gs::Gs::DrawState& state, s32 left, s32 top, s32 
             stats.contentHits++;
         }
 
+        // Upscaled when the option's on and no pack's texture stands in for it
+        const bool replaced = c.replacement != 0 && ReplacementsEnabled();
+        const u32 upscale = replaced ? 0 : UpscaleFor(base.width, base.height);
+        if (upscale != 0 && (c.upscaled == 0 || c.upscaledScale != upscale))
+        {
+            if (c.upscaled != 0)
+            {
+                gl.DeleteTextures(1, &c.upscaled);
+            }
+
+            c.upscaled = MakeUpscaled(c.id, base.width, base.height, upscale);
+            c.upscaledScale = upscale;
+        }
+
         // The texture's own tiles stay as they are (none of this was decoded into it)
         t.contentEpoch = ++epoch_;
         t.complete = true;
         t.checkedEpoch = epoch_;
-        t.shown = c.replacement != 0 && ReplacementsEnabled() ? c.replacement : c.id;
+        t.shown = replaced ? c.replacement : (upscale != 0 && c.upscaled != 0) ? c.upscaled : c.id;
         return t.shown;
     }
 
@@ -2279,7 +2346,31 @@ GLuint HwGs::DecodeOnGpu(const Gs::Gs::DrawState& state, s32 left, s32 top, s32 
         t.checkedEpoch = epoch_;
     }
 
+    // Upscaled when the option's on, the texture came whole from data the CPU wrote (not a render target's) and no pack's texture
+    // stands in for it: made again when its tiles were decoded again or the scale changed
     t.shown = t.replacement != 0 && ReplacementsEnabled() ? t.replacement : t.id;
+    if (t.shown == t.id)
+    {
+        const u32 upscale = whole && t.complete && (t.pages & (cpuStale_ | newestMask_)).none()
+                                ? UpscaleFor(base.width, base.height)
+                                : 0;
+        if (upscale != 0 && (anyStale || t.upscaled == 0 || t.upscaledScale != upscale))
+        {
+            if (t.upscaled != 0)
+            {
+                gl.DeleteTextures(1, &t.upscaled);
+            }
+
+            t.upscaled = MakeUpscaled(t.id, base.width, base.height, upscale);
+            t.upscaledScale = upscale;
+        }
+
+        if (upscale != 0 && t.upscaled != 0)
+        {
+            t.shown = t.upscaled;
+        }
+    }
+
     return t.shown;
 }
 
@@ -2298,6 +2389,86 @@ GLuint HwGs::MakeLevels(const Gs::Gs::DrawState& state)
     gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
     gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, static_cast<GLint>(state.levelCount - 1));
     return id;
+}
+
+GLuint HwGs::MakeUpscaled(GLuint source, u32 width, u32 height, u32 scale)
+{
+    Gl& gl = GetGl();
+    GLuint id = 0;
+    const u32 outWidth = width * scale;
+    const u32 outHeight = height * scale;
+    gl.GenTextures(1, &id);
+    gl.BindTexture(GL_TEXTURE_2D, id);
+    gl.TexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(GL_RGBA8), static_cast<GLsizei>(outWidth), static_cast<GLsizei>(outHeight), 0,
+                  GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+    gl.BindFramebuffer(GL_FRAMEBUFFER, decodeFbo_);
+    gl.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, id, 0);
+    Pass((2ull << 40) | id, "texture upscale");
+    gl.Viewport(0, 0, static_cast<GLsizei>(outWidth), static_cast<GLsizei>(outHeight));
+    gl.Disable(GL_SCISSOR_TEST);
+    gl.Disable(GL_DEPTH_TEST);
+    gl.Disable(GL_STENCIL_TEST);
+    gl.Disable(GL_BLEND);
+    gl.ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    gl.UseProgram(upscaleProgram_);
+    gl.ActiveTexture(GL_TEXTURE0);
+    gl.BindTexture(GL_TEXTURE_2D, source);
+    gl.Uniform1i(gl.GetUniformLocation(upscaleProgram_, "source"), 0);
+    gl.Uniform2f(gl.GetUniformLocation(upscaleProgram_, "sourceSize"), static_cast<f32>(width), static_cast<f32>(height));
+    gl.Uniform1f(gl.GetUniformLocation(upscaleProgram_, "scale"), static_cast<f32>(scale));
+    gl.Uniform2f(gl.GetUniformLocation(upscaleProgram_, "viewSize"), static_cast<f32>(outWidth), static_cast<f32>(outHeight));
+    gl.Uniform4f(gl.GetUniformLocation(upscaleProgram_, "rect"), 0.0f, 0.0f, static_cast<f32>(outWidth), static_cast<f32>(outHeight));
+    gl.BindVertexArray(emptyArray_);
+    gl.DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    gl.BindTexture(GL_TEXTURE_2D, id);
+    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 1000);
+    gl.GenerateMipmap(GL_TEXTURE_2D);
+    return id;
+}
+
+u32 HwGs::UpscaleFor(u32 width, u32 height) const
+{
+    // 0 off, 1 2x, 2 4x; not past 4096 texels a side (the big ones are the screens' and the skies' already)
+    const u32 scale = g_TextureUpscale == 1 ? 2 : g_TextureUpscale == 2 ? 4 : 0;
+    if (scale == 0 || width == 0 || height == 0 || width * scale > 4096 || height * scale > 4096)
+    {
+        return 0;
+    }
+
+    return scale;
+}
+
+void HwGs::DropUpscaled()
+{
+    Gl& gl = GetGl();
+    for (auto& entry : gpuTextures_)
+    {
+        GpuTexture& t = entry.second;
+        if (t.upscaled != 0)
+        {
+            gl.DeleteTextures(1, &t.upscaled);
+            t.upscaled = 0;
+            t.upscaledScale = 0;
+        }
+
+        // (shown again: decided afresh at the next draw that wants it)
+        t.complete = false;
+        t.contentEpoch = 0;
+        t.shown = 0;
+    }
+
+    for (auto& entry : contents_)
+    {
+        ContentTexture& c = entry.second;
+        if (c.upscaled != 0)
+        {
+            gl.DeleteTextures(1, &c.upscaled);
+            c.upscaled = 0;
+            c.upscaledScale = 0;
+        }
+    }
 }
 
 u64 HwGs::ContentHash(const Gs::Gs::DrawState& state)
@@ -5266,6 +5437,26 @@ void HardwareSetFiltering(int mode)
     }
 
     g_FilterMode = std::clamp(mode, 0, 2);
+}
+
+void HardwareSetUpscale(int mode)
+{
+    mode = std::clamp(mode, 0, 2);
+    if (mode == g_TextureUpscale)
+    {
+        return;
+    }
+
+    if (g_Hw != nullptr)
+    {
+        g_Hw->Flush();
+    }
+
+    g_TextureUpscale = mode;
+    if (g_Hw != nullptr)
+    {
+        g_Hw->DropUpscaled();
+    }
 }
 
 HardwareStats GetHardwareStats()

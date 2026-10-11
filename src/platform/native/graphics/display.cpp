@@ -669,8 +669,13 @@ void NativeGraphicsSetTextureFiltering(int mode)
 
 bool NativeGraphicsSetTextureUpscale(int mode)
 {
-    // Not yet: only off
-    return mode == 0;
+    if (mode < 0 || mode > 2)
+    {
+        return false;
+    }
+
+    NativeGraphics::RenderCall([mode] { NativeGraphics::HardwareSetUpscale(mode); });
+    return true;
 }
 
 bool NativeGraphicsSetTexturePack(bool on)
