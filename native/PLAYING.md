@@ -5,7 +5,8 @@ you need your own copy of the game.
 
 ## What you need
 
-- A Mac with Apple Silicon or Intel, running a recent macOS.
+- A Mac with Apple silicon (M1 or later), running a recent macOS. The app is built for Apple silicon only: Intel Macs aren't
+  supported.
 - A disc image of **your own** PAL copy of Crash Twinsanity (Europe/Australia, SLES-52568), as an `.iso` (or `.bin`/`.img`).
   Other versions (USA, Japan) aren't supported.
 
@@ -60,8 +61,13 @@ and inverted Y are there too.
 ## Options
 
 Options (from the main or pause menu) has PC settings: window size or fullscreen, the internal resolution (1× to 4× the PS2's),
-widescreen (4:3, 16:9 or 21:9), 50 or 60 Hz, texture filtering, scanlines, texture packs, anti-aliasing, v-sync, volumes,
-skipping cutscenes, faster loading, and optional fixes of the original game's bugs (off plays exactly like the PS2).
+widescreen (4:3, 16:9 or 21:9), 50 or 60 Hz, texture filtering, scanlines, texture packs, texture upscale (2x, 4x), anti-aliasing
+(FXAA, or supersampling 2x and 4x, which is slower), render distance, v-sync, volumes, skipping cutscenes, faster loading, and
+optional fixes of the original game's bugs (off plays exactly like the PS2).
+
+Render distance starts at Unlimited, so everything draws and nothing pops in as you get close. If the game runs slowly, lower it
+(Long, Medium, Original, Short) or lower the internal resolution: 4x is the sharpest, 2x or 3x holds 50 frames a second on more
+Macs.
 
 ## If something goes wrong
 

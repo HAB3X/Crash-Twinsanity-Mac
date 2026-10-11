@@ -10,6 +10,9 @@ The retail executable is still split, into one asm file per function and its dat
 the C++ was checked against. The repository has none of the game's code or data. You need your own copy of the PAL game: building
 splits its executable on your machine.
 
+**Playing on a Mac:** download `Crash-Twinsanity-macOS.zip` from the [releases](https://github.com/HAB3X/Crash-Twinsanity-Mac/releases)
+and read [native/PLAYING.md](native/PLAYING.md). It needs an Apple silicon Mac and your own PAL disc image (SLES-52568).
+
 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) explains how the decomp is put together, the tools that test builds and what replacing
 the game's code had to look out for. [docs/RETAIL_BUGS.md](docs/RETAIL_BUGS.md) lists the bugs of the retail code the C++ keeps.
 
