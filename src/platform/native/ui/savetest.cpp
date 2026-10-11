@@ -17,7 +17,10 @@
 #include "game/gamecontroller.h"
 #include "game/menus.h"
 
+#include <SDL3/SDL.h>
+
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -235,6 +238,38 @@ bool SaveTestMenuStep(MenuPage* page, MenuInput* input, u32 player)
     return true;
 }
 
+// $TWIN_SWEEP_SKIP_AT=SECONDS[, $TWIN_SWEEP_SKIP_EVERY=SECONDS] after a load (as ui/sweep.cpp's): a key pressed for a second from
+// that long into the play, nothing held before it (the cutscene's skip, on the play's own clock), and the state changes logged
+void DriveLoadedPlay(GameController* controller)
+{
+    static u32 lastState = ~0u;
+    u32 state = controller->State();
+    if (state != lastState)
+    {
+        lastState = state;
+        Native::Log("savetest: state %u at %.1f s of play, skips %u", state, g_Playing ? Since(g_PlayStart) : 0.0f, SkipsDone());
+    }
+
+    static const char* skipAt = std::getenv("TWIN_SWEEP_SKIP_AT");
+    if (skipAt == nullptr || !g_Playing)
+    {
+        return;
+    }
+
+    static const char* skipEvery = std::getenv("TWIN_SWEEP_SKIP_EVERY");
+    f32 at = static_cast<f32>(std::atof(skipAt));
+    f32 every = skipEvery != nullptr ? static_cast<f32>(std::atof(skipEvery)) : 0.0f;
+    f32 now = Since(g_PlayStart);
+    f32 since = now - at;
+    if (every > 1.0f && since >= 0.0f)
+    {
+        since = std::fmod(since, every);
+    }
+
+    bool pressing = since >= 0.0f && since < 1.0f;
+    SkipHoldForTest(true, pressing ? std::vector<s32>{SDL_SCANCODE_SPACE} : std::vector<s32>{}, now);
+}
+
 void SaveTestFrame()
 {
     if (!SaveTestActive())
@@ -386,7 +421,23 @@ void SaveTestFrame()
         }
 
         break;
+    case GameController::StateWatching:
+        if (g_Playing && g_Mode == Mode::Load)
+        {
+            DriveLoadedPlay(controller);
+            if (Since(g_PlayStart) > g_Seconds)
+            {
+                Finish(0, "loaded and played");
+            }
+        }
+
+        break;
     case GameController::StatePlaying:
+        if (g_Mode == Mode::Load && g_Playing)
+        {
+            DriveLoadedPlay(controller);
+        }
+
         if (!g_Playing)
         {
             g_Playing = true;
@@ -440,6 +491,15 @@ void SaveTestInput(BoundPad* pad)
     if (SaveTestActive() && g_PressStart)
     {
         pad->buttons |= PadBitStart;
+    }
+
+    // $TWIN_SWEEP_STICK=DEGREES in a loaded play: the stick held that way (a walk in a line from the save's place)
+    static const char* stick = std::getenv("TWIN_SWEEP_STICK");
+    if (stick != nullptr && SaveTestActive() && g_Mode == Mode::Load && g_Playing)
+    {
+        f32 angle = static_cast<f32>(std::atof(stick)) * 3.14159265f / 180.0f;
+        pad->leftX = static_cast<u8>(128.0f + std::sin(angle) * 127.0f);
+        pad->leftY = static_cast<u8>(128.0f - std::cos(angle) * 127.0f);
     }
 }
 }
