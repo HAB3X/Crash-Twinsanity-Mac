@@ -156,12 +156,16 @@ def main():
     parser.add_argument("--timeout", type=float, default=180)
     parser.add_argument("--jobs", type=int, default=3)
     parser.add_argument("--only", default="")
+    parser.add_argument("--app", help="the game's executable (default: build/native/cmake's)")
     parser.add_argument("--skip-at", type=float, help="press a key (the cutscene skip) from this many seconds of play...")
     parser.add_argument("--skip-every", type=float, default=6.0, help="...and again every this many seconds")
     parser.add_argument("--resume", action="store_true", help="skip the chunks OUT/results.json has already")
     parser.add_argument("--reparse", action="store_true", help="the results made again from OUT's logs (no runs)")
     parser.add_argument("--report", help="write the markdown table of OUT/results.json to this file and stop")
     arguments = parser.parse_args()
+    global APP
+    if arguments.app:
+        APP = Path(arguments.app)
     out = Path(arguments.out)
     if arguments.reparse:
         results = json.loads((out / "results.json").read_text())

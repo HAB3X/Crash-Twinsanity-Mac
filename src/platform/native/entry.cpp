@@ -30,17 +30,20 @@ int SelfTestLowMemory()
 {
     g_NativeLowMemory[0x10] = 0x5A;
     g_NativeLowMemory[0x18] = 0x80;
-    volatile u8* null = nullptr;
+    // (the addresses made at run time, as the retail code's are: a constant address is an operand with no register to move, which
+    // the x86-64 way of doing this can't, and the game's code has none)
+    volatile uiptr zero = 0;
+    volatile u8* null = reinterpret_cast<volatile u8*>(zero);
     u8 byte = null[0x10];
     s8 signedByte = static_cast<s8>(null[0x18]);
-    volatile u32* words = reinterpret_cast<volatile u32*>(static_cast<uiptr>(0x40));
+    volatile u32* words = reinterpret_cast<volatile u32*>(zero + 0x40);
     words[1] = 0x12345678;
     u32 word = words[1];
-    volatile u64* pair = reinterpret_cast<volatile u64*>(static_cast<uiptr>(0x80));
+    volatile u64* pair = reinterpret_cast<volatile u64*>(zero + 0x80);
     pair[0] = 1;
     pair[1] = 2;
     u64 sum = pair[0] + pair[1];
-    volatile float* f = reinterpret_cast<volatile float*>(static_cast<uiptr>(0x100));
+    volatile float* f = reinterpret_cast<volatile float*>(zero + 0x100);
     f[0] = 1.5f;
     float back = f[0];
     bool ok = byte == 0x5A && signedByte == -128 && word == 0x12345678 && sum == 3 && back == 1.5f;

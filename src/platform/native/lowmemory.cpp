@@ -7,6 +7,8 @@
 #include "native.h"
 
 #include <csignal>
+#include <mach-o/dyld.h>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <execinfo.h>
@@ -353,6 +355,31 @@ void OnFault(int signal, siginfo_t* info, void* context)
     Registers registers(static_cast<ucontext_t*>(context));
     if (address < LowMemoryLimit && registers.Pc() != address && Emulate(registers))
     {
+        // $TWIN_LOWMEM_TRACE=1: each distinct place that went to the low memory, once (the pc, the address, the instruction's word)
+        static const bool trace = std::getenv("TWIN_LOWMEM_TRACE") != nullptr;
+        if (trace)
+        {
+            static u64 seen[256];
+            static u32 seenCount = 0;
+            u64 pc = registers.Pc();
+            bool known = false;
+            for (u32 i = 0; i < seenCount; i++)
+            {
+                known = known || seen[i] == pc;
+            }
+
+            if (!known && seenCount < 256)
+            {
+                seen[seenCount++] = pc;
+                char line[160];
+                int length = std::snprintf(line, sizeof(line), "[native] lowmem: pc %#llx (file %#llx) address %#llx instruction %08x\n",
+                                           static_cast<unsigned long long>(pc),
+                                           static_cast<unsigned long long>(pc - static_cast<u64>(_dyld_get_image_vmaddr_slide(0))),
+                                           static_cast<unsigned long long>(address), *reinterpret_cast<u32*>(pc));
+                ::write(2, line, static_cast<size_t>(length));
+            }
+        }
+
         registers.Pc() += 4;
         if (g_Emulated++ == 0 && Native::GetSettings().logStubs)
         {
@@ -388,6 +415,222 @@ void OnFault(int signal, siginfo_t* info, void* context)
     struct sigaction& previous = g_Previous[signal == SIGBUS ? 1 : 0];
     sigaction(signal, &previous, nullptr);
 }
+#elif defined(__x86_64__) && defined(__APPLE__)
+// The x86-64 way: the faulting instruction's memory operand is found (its base register, or its index) and that register moved
+// by the address of g_NativeLowMemory, so the same instruction, run again, reads or writes the buffer; the processor's trap flag
+// stops it after that one instruction and the register is put back (left alone when the instruction wrote it: a load into its
+// own base). Nothing of the instruction's meaning is needed, so every load and store the compiler makes works
+constexpr uiptr LowMemoryLimit = NativeLowMemoryBytes - 64;
+
+struct sigaction g_Previous[3];
+u32 g_Emulated = 0;
+
+// The step in progress on this thread: the register moved, what it held and what it holds with the shift
+struct Step
+{
+    bool stepping = false;
+    int reg = 0;
+    u64 original = 0;
+    u64 shifted = 0;
+};
+thread_local Step t_Step;
+
+using MachineState = __darwin_x86_thread_state64;
+MachineState& StateOf(void* context)
+{
+    return static_cast<ucontext_t*>(context)->uc_mcontext->__ss;
+}
+
+u64& Reg(MachineState& s, int n)
+{
+    switch (n)
+    {
+    case 0: return reinterpret_cast<u64&>(s.__rax);
+    case 1: return reinterpret_cast<u64&>(s.__rcx);
+    case 2: return reinterpret_cast<u64&>(s.__rdx);
+    case 3: return reinterpret_cast<u64&>(s.__rbx);
+    case 4: return reinterpret_cast<u64&>(s.__rsp);
+    case 5: return reinterpret_cast<u64&>(s.__rbp);
+    case 6: return reinterpret_cast<u64&>(s.__rsi);
+    case 7: return reinterpret_cast<u64&>(s.__rdi);
+    case 8: return reinterpret_cast<u64&>(s.__r8);
+    case 9: return reinterpret_cast<u64&>(s.__r9);
+    case 10: return reinterpret_cast<u64&>(s.__r10);
+    case 11: return reinterpret_cast<u64&>(s.__r11);
+    case 12: return reinterpret_cast<u64&>(s.__r12);
+    case 13: return reinterpret_cast<u64&>(s.__r13);
+    case 14: return reinterpret_cast<u64&>(s.__r14);
+    default: return reinterpret_cast<u64&>(s.__r15);
+    }
+}
+u64& Rip(MachineState& s) { return reinterpret_cast<u64&>(s.__rip); }
+u64& Flags(MachineState& s) { return reinterpret_cast<u64&>(s.__rflags); }
+
+// The memory operand of the instruction at p: its base and index registers (-1: none) and the index's scale. False for what has
+// none to move (a register operand, a RIP-relative or absolute address, the string instructions and the moffs forms)
+bool FindMemoryOperand(const u8* p, int* base, int* index, int* scale)
+{
+    bool rexX = false;
+    bool rexB = false;
+    for (;;)
+    {
+        u8 b = *p;
+        if (b == 0x66 || b == 0x67 || b == 0xF2 || b == 0xF3 || b == 0xF0 || b == 0x2E || b == 0x36 || b == 0x3E || b == 0x26 ||
+            b == 0x64 || b == 0x65)
+        {
+            if (b == 0x67)
+            {
+                return false;
+            }
+
+            p++;
+            continue;
+        }
+
+        break;
+    }
+
+    if ((*p & 0xF0) == 0x40)
+    {
+        rexX = (*p & 2) != 0;
+        rexB = (*p & 1) != 0;
+        p++;
+    }
+
+    if (*p == 0xC5)
+    {
+        // VEX, two bytes: C5, R/vvvv/L/pp, then the opcode
+        p += 3;
+    }
+    else if (*p == 0xC4)
+    {
+        // VEX, three bytes: C4, R/X/B/mmmmm, W/vvvv/L/pp, then the opcode (the bits are inverted)
+        rexX = (p[1] & 0x40) == 0;
+        rexB = (p[1] & 0x20) == 0;
+        p += 4;
+    }
+    else if (*p == 0x62)
+    {
+        // EVEX: not made by the compiler for this build
+        return false;
+    }
+    else
+    {
+        u8 op = *p++;
+        if (op == 0x0F)
+        {
+            u8 second = *p++;
+            if (second == 0x38 || second == 0x3A)
+            {
+                p++;
+            }
+        }
+        else if ((op >= 0xA0 && op <= 0xA7) || (op >= 0xAA && op <= 0xAF) || op == 0xD7 || (op >= 0x50 && op <= 0x5F) ||
+                 (op >= 0x70 && op <= 0x7F) || (op >= 0xB0 && op <= 0xBF) || (op >= 0x90 && op <= 0x9F) || op >= 0xE0)
+        {
+            return false;
+        }
+    }
+
+    u8 modrm = *p++;
+    u8 mod = modrm >> 6;
+    u8 rm = modrm & 7;
+    if (mod == 3)
+    {
+        return false;
+    }
+
+    *scale = 1;
+    *index = -1;
+    if (rm == 4)
+    {
+        u8 sib = *p++;
+        *scale = 1 << (sib >> 6);
+        int i = ((sib >> 3) & 7) | (rexX ? 8 : 0);
+        *index = i == 4 ? -1 : i;
+        *base = ((sib & 7) == 5 && mod == 0) ? -1 : ((sib & 7) | (rexB ? 8 : 0));
+        return true;
+    }
+
+    if (rm == 5 && mod == 0)
+    {
+        return false;
+    }
+
+    *base = rm | (rexB ? 8 : 0);
+    return true;
+}
+
+void OnFault(int signal, siginfo_t* info, void* context)
+{
+    MachineState& state = StateOf(context);
+    auto address = reinterpret_cast<uiptr>(info->si_addr);
+    int base = -1;
+    int index = -1;
+    int scale = 1;
+    if (address < LowMemoryLimit && !t_Step.stepping && FindMemoryOperand(reinterpret_cast<const u8*>(Rip(state)), &base, &index, &scale) &&
+        !(base >= 0 && base == index))
+    {
+        const u64 shift = reinterpret_cast<u64>(g_NativeLowMemory);
+        int reg = base >= 0 ? base : index;
+        u64 add = base >= 0 ? shift : shift / static_cast<u64>(scale);
+        if (reg >= 0 && reg != 4)
+        {
+            static const bool trace = std::getenv("TWIN_LOWMEM_TRACE") != nullptr;
+            if (trace)
+            {
+                char line[160];
+                int length = std::snprintf(line, sizeof(line), "[native] lowmem: rip %#llx address %#llx base %d index %d\n",
+                                           static_cast<unsigned long long>(Rip(state)), static_cast<unsigned long long>(address), base,
+                                           index);
+                ::write(2, line, static_cast<size_t>(length));
+            }
+
+            u64& r = Reg(state, reg);
+            t_Step = {true, reg, r, r + add};
+            r += add;
+            Flags(state) |= 0x100;
+            if (g_Emulated++ == 0 && Native::GetSettings().logStubs)
+            {
+                static const char message[] = "[native] a retail null pointer read/write went to the PS2's low memory\n";
+                ::write(2, message, sizeof(message) - 1);
+            }
+
+            return;
+        }
+    }
+
+    char message[160];
+    const u8* code = reinterpret_cast<const u8*>(Rip(state));
+    int length = std::snprintf(message, sizeof(message),
+                               "[native] fatal %s at %#llx (rip %#llx: %02x %02x %02x %02x %02x %02x %02x %02x), backtrace:\n",
+                               signal == SIGBUS ? "SIGBUS" : "SIGSEGV", static_cast<unsigned long long>(address),
+                               static_cast<unsigned long long>(Rip(state)), code[0], code[1], code[2], code[3], code[4], code[5],
+                               code[6], code[7]);
+    ::write(2, message, static_cast<size_t>(length));
+    void* frames[48];
+    backtrace_symbols_fd(frames, backtrace(frames, 48), 2);
+    sigaction(signal, &g_Previous[signal == SIGBUS ? 1 : 0], nullptr);
+}
+
+// After the one instruction: the register back as it was, unless the instruction wrote it
+void OnTrap(int signal, siginfo_t* info, void* context)
+{
+    MachineState& state = StateOf(context);
+    if (!t_Step.stepping)
+    {
+        return;
+    }
+
+    u64& r = Reg(state, t_Step.reg);
+    if (r == t_Step.shifted)
+    {
+        r = t_Step.original;
+    }
+
+    Flags(state) &= ~static_cast<u64>(0x100);
+    t_Step.stepping = false;
+}
 #endif
 }
 
@@ -410,6 +653,15 @@ void StartLowMemory()
     sigemptyset(&action.sa_mask);
     sigaction(SIGSEGV, &action, &g_Previous[0]);
     sigaction(SIGBUS, &action, &g_Previous[1]);
+#elif defined(__x86_64__) && defined(__APPLE__)
+    struct sigaction action = {};
+    action.sa_sigaction = OnFault;
+    action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sigemptyset(&action.sa_mask);
+    sigaction(SIGSEGV, &action, &g_Previous[0]);
+    sigaction(SIGBUS, &action, &g_Previous[1]);
+    action.sa_sigaction = OnTrap;
+    sigaction(SIGTRAP, &action, &g_Previous[2]);
 #else
     Log("the PS2's low memory isn't emulated on this machine's processor: a retail null read will crash");
 #endif
