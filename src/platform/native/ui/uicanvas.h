@@ -22,6 +22,8 @@ enum class HitKind : u32
     FooterClear,
     KeepYes,
     KeepNo,
+    // The Characters tab's preview, which the mouse turns
+    Preview,
 };
 
 struct HitRegion

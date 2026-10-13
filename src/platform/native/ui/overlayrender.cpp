@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <mutex>
 #include <tuple>
 
 #include "../../../../native/third_party/stb/stb_truetype.h"
@@ -390,6 +391,9 @@ struct Renderer
     GLuint buffer = 0;
     // The images' textures (made the first time each is drawn; 0 none: drawn instead)
     GLuint images[static_cast<u32>(OverlayImage::Count)] = {};
+    // The character preview's texture and the version of its pixels in it
+    GLuint preview = 0;
+    u32 previewVersion = 0;
     bool imagesTried[static_cast<u32>(OverlayImage::Count)] = {};
     std::map<std::pair<u32, s32>, Atlas> atlases;
     std::map<std::string, GLint> uniforms;
@@ -714,8 +718,50 @@ void DrawBoxCommand(Renderer& r, const OverlayFrame::Command& command)
     DrawBox(r, x, y, w, h, radius, s.fill, s.fillBottom, s.border * r.scale, s.borderColour, 0.0f);
 }
 
+// The character preview's pixels, from the game's thread
+std::mutex g_PreviewLock;
+std::vector<u32> g_PreviewPixels;
+s32 g_PreviewWidth = 0;
+s32 g_PreviewHeight = 0;
+u32 g_PreviewVersion = 0;
+
+GLuint PreviewTexture(Renderer& r)
+{
+    std::lock_guard<std::mutex> lock(g_PreviewLock);
+    if (g_PreviewPixels.empty())
+    {
+        return 0;
+    }
+
+    Gl& gl = r.gl;
+    if (r.preview == 0)
+    {
+        gl.GenTextures(1, &r.preview);
+    }
+
+    gl.BindTexture(GL_TEXTURE_2D, r.preview);
+    if (r.previewVersion != g_PreviewVersion)
+    {
+        r.previewVersion = g_PreviewVersion;
+        gl.PixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, g_PreviewWidth, g_PreviewHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                      g_PreviewPixels.data());
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+
+    return r.preview;
+}
+
 GLuint ImageTexture(Renderer& r, OverlayImage image)
 {
+    if (image == OverlayImage::CharacterPreview)
+    {
+        return PreviewTexture(r);
+    }
+
     u32 index = static_cast<u32>(image);
     if (r.imagesTried[index])
     {
@@ -752,6 +798,11 @@ void DrawImage(Renderer& r, const OverlayFrame::Command& command)
     std::vector<Vertex> quad;
     AddQuad(quad, x, y, x + command.width * r.scale, y + command.height * r.scale);
     s32 mode = 3;
+    if (texture == 0 && command.image == OverlayImage::CharacterPreview)
+    {
+        return;
+    }
+
     if (texture == 0)
     {
         // Drawn: the fruit, or a PlayStation button's shape (5 + its shape)
@@ -914,5 +965,14 @@ bool RenderFrameOffscreen(u32 width, u32 height, std::vector<u32>* pixels)
     gl.DeleteFramebuffers(1, &framebuffer);
     gl.DeleteTextures(1, &texture);
     return true;
+}
+
+void SetOverlayPreview(const std::vector<u32>& pixels, s32 width, s32 height)
+{
+    std::lock_guard<std::mutex> lock(g_PreviewLock);
+    g_PreviewPixels = pixels;
+    g_PreviewWidth = width;
+    g_PreviewHeight = height;
+    g_PreviewVersion++;
 }
 }

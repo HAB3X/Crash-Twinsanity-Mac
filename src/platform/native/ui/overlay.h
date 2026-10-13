@@ -101,8 +101,12 @@ enum class OverlayImage : u32
     MouseMiddle,
     MouseWheelUp,
     MouseWheelDown,
+    // The options' character preview: pixels the game's thread hands over each frame (SetOverlayPreview)
+    CharacterPreview,
     Count,
 };
+// The character preview's pixels (RGBA, red the low byte, straight alpha), taken by the presenter when it next draws the image
+void SetOverlayPreview(const std::vector<u32>& pixels, s32 width, s32 height);
 // Whether an image's art is there to draw (the Xbox's and the Switch's need the disc)
 bool OverlayImageAvailable(OverlayImage image);
 

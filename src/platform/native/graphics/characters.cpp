@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -1290,10 +1291,346 @@ void DrawPack(Pack& pack, const InstanceContext* instance, const GameOGI* ogi, c
     // The GS's settings changed under the bucket's next material: it sets its own again
     bucket.lastCall = 0;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// The options' preview: the pack drawn on the CPU by a small rasteriser (perspective-correct texture coordinates, bilinear
+// texels, a depth buffer, the blended materials after the rest), lit by a warm key, a cool fill and a rim
+
+struct ShowcaseStep
+{
+    const char* clip;
+    f32 seconds;
+    bool loops;
+};
+
+// Idle, a run, idle again and a fidget, round and round, each blending into the next
+constexpr ShowcaseStep Showcase[] = {
+    {"b/idle", 3.2f, true}, {"a/run|a/walk", 2.4f, true}, {"b/idle", 1.6f, true},
+    {"e/taunt|b/itch|b/idle", 2.5f, false}, {"b/idle", 1.6f, true}, {"b/itch|b/idle", 2.4f, false},
+};
+
+void ShowcasePose(const Pack& pack, f32 seconds, std::vector<Affine>& pose)
+{
+    f32 total = 0.0f;
+    for (const ShowcaseStep& step : Showcase)
+    {
+        total += step.seconds;
+    }
+
+    f32 t = std::fmod(std::max(seconds, 0.0f), total);
+    u32 index = 0;
+    while (t >= Showcase[index].seconds)
+    {
+        t -= Showcase[index].seconds;
+        index = (index + 1) % std::size(Showcase);
+    }
+
+    auto clipPose = [&](u32 step, f32 time, std::vector<Affine>& out) {
+        const PackClip& clip = pack.clips[ClipNamed(pack, Showcase[step].clip)];
+        ClipPose(pack, clip, time * clip.rate, Showcase[step].loops, out);
+    };
+
+    clipPose(index, t, pose);
+    constexpr f32 Blend = BlendSeconds * 2.0f;
+    if (t < Blend)
+    {
+        u32 before = (index + static_cast<u32>(std::size(Showcase)) - 1) % static_cast<u32>(std::size(Showcase));
+        std::vector<Affine> from;
+        clipPose(before, Showcase[before].seconds + t, from);
+        f32 share = t / Blend;
+        share = share * share * (3.0f - 2.0f * share);
+        for (u32 j = 0; j < pack.jointCount; j++)
+        {
+            Lerp(from[j], pose[j], share, &pose[j], j < pack.pivots.size() ? pack.pivots[j].data() : nullptr);
+        }
+    }
+}
+
+// How far the showcase reaches: the lowest and highest points, and the farthest from the up axis
+struct ShowcaseExtent
+{
+    f32 low = 0.0f;
+    f32 high = 1.0f;
+    f32 reach = 0.5f;
+};
+
+const ShowcaseExtent& ExtentOf(const Pack& pack)
+{
+    static std::map<std::string, ShowcaseExtent> extents;
+    auto found = extents.find(pack.folder);
+    if (found != extents.end())
+    {
+        return found->second;
+    }
+
+    ShowcaseExtent extent;
+    extent.low = 1e9f;
+    extent.high = -1e9f;
+    extent.reach = 0.0f;
+    std::vector<Affine> pose;
+    for (const ShowcaseStep& step : Showcase)
+    {
+        const PackClip& clip = pack.clips[ClipNamed(pack, step.clip)];
+        for (u32 frame = 0; frame < clip.frames; frame += 2)
+        {
+            ClipPose(pack, clip, static_cast<f32>(frame), false, pose);
+            for (const PackMaterial& material : pack.materials)
+            {
+                for (const PackVertex& vertex : material.vertices)
+                {
+                    f32 p[3];
+                    f32 n[3];
+                    SkinVertex(vertex, pose, p, n);
+                    extent.low = std::min(extent.low, p[1]);
+                    extent.high = std::max(extent.high, p[1]);
+                    extent.reach = std::max(extent.reach, std::sqrt(p[0] * p[0] + p[2] * p[2]));
+                }
+            }
+        }
+    }
+
+    if (extent.low > extent.high)
+    {
+        extent = ShowcaseExtent{};
+    }
+
+    return extents.emplace(pack.folder, extent).first->second;
+}
+
+struct PreviewVertex
+{
+    f32 x, y, z;
+    f32 u, v;
+    f32 shade[3];
+};
+
+// Bilinear and wrapping, from the pixels as the GS has them (alpha 0x80 opaque)
+void Texel(const PackTexture& texture, f32 u, f32 v, f32* out)
+{
+    const auto* pixels = reinterpret_cast<const u8*>(texture.pixels.data());
+    f32 x = u * static_cast<f32>(texture.width) - 0.5f;
+    f32 y = v * static_cast<f32>(texture.height) - 0.5f;
+    f32 fx = std::floor(x);
+    f32 fy = std::floor(y);
+    f32 ax = x - fx;
+    f32 ay = y - fy;
+    s32 x0 = static_cast<s32>(fx);
+    s32 y0 = static_cast<s32>(fy);
+    for (u32 k = 0; k < 4; k++)
+    {
+        out[k] = 0.0f;
+    }
+
+    for (u32 corner = 0; corner < 4; corner++)
+    {
+        s32 cx = (x0 + static_cast<s32>(corner & 1)) & static_cast<s32>(texture.width - 1);
+        s32 cy = (y0 + static_cast<s32>(corner >> 1)) & static_cast<s32>(texture.height - 1);
+        f32 weight = ((corner & 1) ? ax : 1.0f - ax) * ((corner >> 1) ? ay : 1.0f - ay);
+        const u8* p = pixels + (static_cast<size_t>(cy) * texture.width + static_cast<size_t>(cx)) * 4;
+        out[0] += weight * p[0] / 255.0f;
+        out[1] += weight * p[1] / 255.0f;
+        out[2] += weight * p[2] / 255.0f;
+        out[3] += weight * std::min(1.0f, p[3] / 128.0f);
+    }
+}
+
+void RenderPack(const Pack& pack, f32 seconds, f32 yaw, u32 width, u32 height, std::vector<u32>& pixels)
+{
+    std::vector<Affine> pose;
+    ShowcasePose(pack, seconds, pose);
+    std::vector<f32> colour(static_cast<size_t>(width) * height * 4, 0.0f);
+    std::vector<f32> depth(static_cast<size_t>(width) * height, 1e30f);
+    // A 26 degree view fitting everything the showcase does (its height, and its reach round the up axis at any turn) with a
+    // margin, the camera in front of it (the packs' models face -Z)
+    const ShowcaseExtent& extent = ExtentOf(pack);
+    f32 modelHeight = std::max(0.1f, extent.high - extent.low);
+    f32 centreY = extent.low + modelHeight * 0.5f;
+    f32 tangent = std::tan(13.0f * 3.14159265f / 180.0f);
+    f32 aspect = static_cast<f32>(width) / static_cast<f32>(height);
+    f32 distance = std::max(modelHeight * 0.56f, extent.reach * 1.15f / aspect) / tangent;
+    f32 focal = static_cast<f32>(height) * 0.5f / tangent;
+    f32 cx = static_cast<f32>(width) * 0.5f;
+    f32 cy = static_cast<f32>(height) * 0.5f;
+    f32 radians = yaw * 3.14159265f / 180.0f;
+    f32 cosYaw = std::cos(radians);
+    f32 sinYaw = std::sin(radians);
+    // The lights' directions in the camera's space (x right, y up, z away from the eye)
+    const f32 key[3] = {-0.45f, -0.65f, 0.62f};
+    const f32 fill[3] = {0.7f, -0.1f, 0.7f};
+
+    // The ground's shadow: a soft dark ellipse under the feet
+    f32 groundY = cy - (extent.low - centreY) * focal / distance;
+    f32 radiusX = modelHeight * 0.3f * focal / distance;
+    f32 radiusY = radiusX * 0.2f;
+    for (u32 y = 0; y < height; y++)
+    {
+        for (u32 x = 0; x < width; x++)
+        {
+            f32 dx = (static_cast<f32>(x) - cx) / radiusX;
+            f32 dy = (static_cast<f32>(y) - groundY) / radiusY;
+            f32 r = dx * dx + dy * dy;
+            if (r < 1.0f)
+            {
+                f32* c = &colour[(static_cast<size_t>(y) * width + x) * 4];
+                c[3] = 0.42f * (1.0f - r) * (1.0f - r);
+                c[0] = 0.02f * c[3];
+                c[1] = 0.06f * c[3];
+                c[2] = 0.16f * c[3];
+            }
+        }
+    }
+
+    for (u32 pass = 0; pass < 2; pass++)
+    {
+        for (const PackMaterial& material : pack.materials)
+        {
+            if (material.blends != (pass == 1))
+            {
+                continue;
+            }
+
+            const PackTexture* texture = material.texture >= 0 ? &pack.textures[material.texture] : nullptr;
+            std::vector<PreviewVertex> corners(material.vertices.size());
+            for (size_t i = 0; i < material.vertices.size(); i++)
+            {
+                f32 p[3];
+                f32 n[3];
+                SkinVertex(material.vertices[i], pose, p, n);
+                // Turned about Y, then the camera's: x right is the model's -x (it faces us down its -Z)
+                f32 x = p[0] * cosYaw - p[2] * sinYaw;
+                f32 z = p[0] * sinYaw + p[2] * cosYaw;
+                f32 nx = n[0] * cosYaw - n[2] * sinYaw;
+                f32 nz = n[0] * sinYaw + n[2] * cosYaw;
+                f32 ny = n[1];
+                f32 length = std::sqrt(nx * nx + ny * ny + nz * nz);
+                if (length > 1e-6f)
+                {
+                    nx /= length;
+                    ny /= length;
+                    nz /= length;
+                }
+
+                PreviewVertex& out = corners[i];
+                out.z = z + distance;
+                out.x = cx - x * focal / out.z;
+                out.y = cy - (p[1] - centreY) * focal / out.z;
+                out.u = material.vertices[i].uv[0];
+                out.v = material.vertices[i].uv[1];
+                f32 normal[3] = {-nx, ny, nz};
+                f32 keyLight = std::max(0.0f, -(normal[0] * key[0] + normal[1] * key[1] + normal[2] * key[2]));
+                f32 fillLight = std::max(0.0f, -(normal[0] * fill[0] + normal[1] * fill[1] + normal[2] * fill[2]));
+                f32 rim = std::pow(1.0f - std::fabs(normal[2]), 3.0f) * 0.4f;
+                f32 ambient = 0.42f;
+                out.shade[0] = (ambient + keyLight * 0.75f + fillLight * 0.16f) * material.colour[0] + rim * 0.7f;
+                out.shade[1] = (ambient + keyLight * 0.70f + fillLight * 0.20f) * material.colour[1] + rim * 0.85f;
+                out.shade[2] = (ambient + keyLight * 0.62f + fillLight * 0.28f) * material.colour[2] + rim;
+            }
+
+            for (size_t t = 0; t + 2 < material.triangles.size(); t += 3)
+            {
+                const PreviewVertex& a = corners[material.triangles[t]];
+                const PreviewVertex& b = corners[material.triangles[t + 1]];
+                const PreviewVertex& c = corners[material.triangles[t + 2]];
+                if (a.z < 0.05f || b.z < 0.05f || c.z < 0.05f)
+                {
+                    continue;
+                }
+
+                f32 area = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
+                if (std::fabs(area) < 1e-6f)
+                {
+                    continue;
+                }
+
+                s32 left = std::max(0, static_cast<s32>(std::floor(std::min({a.x, b.x, c.x}))));
+                s32 right = std::min(static_cast<s32>(width) - 1, static_cast<s32>(std::ceil(std::max({a.x, b.x, c.x}))));
+                s32 top = std::max(0, static_cast<s32>(std::floor(std::min({a.y, b.y, c.y}))));
+                s32 bottom = std::min(static_cast<s32>(height) - 1, static_cast<s32>(std::ceil(std::max({a.y, b.y, c.y}))));
+                f32 inverse[3] = {1.0f / a.z, 1.0f / b.z, 1.0f / c.z};
+                for (s32 y = top; y <= bottom; y++)
+                {
+                    f32 py = static_cast<f32>(y) + 0.5f;
+                    for (s32 x = left; x <= right; x++)
+                    {
+                        f32 px = static_cast<f32>(x) + 0.5f;
+                        f32 w0 = ((b.x - px) * (c.y - py) - (c.x - px) * (b.y - py)) / area;
+                        f32 w1 = ((c.x - px) * (a.y - py) - (a.x - px) * (c.y - py)) / area;
+                        f32 w2 = 1.0f - w0 - w1;
+                        if (w0 < 0.0f || w1 < 0.0f || w2 < 0.0f)
+                        {
+                            continue;
+                        }
+
+                        f32 z = 1.0f / (w0 * inverse[0] + w1 * inverse[1] + w2 * inverse[2]);
+                        size_t at = static_cast<size_t>(y) * width + static_cast<size_t>(x);
+                        if (z >= depth[at])
+                        {
+                            continue;
+                        }
+
+                        f32 p0 = w0 * inverse[0] * z;
+                        f32 p1 = w1 * inverse[1] * z;
+                        f32 p2 = w2 * inverse[2] * z;
+                        f32 texel[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+                        if (texture != nullptr)
+                        {
+                            Texel(*texture, p0 * a.u + p1 * b.u + p2 * c.u, p0 * a.v + p1 * b.v + p2 * c.v, texel);
+                        }
+
+                        f32 alpha = texel[3];
+                        if (alpha < (material.blends ? 0.02f : 0.3f))
+                        {
+                            continue;
+                        }
+
+                        if (!material.blends)
+                        {
+                            alpha = 1.0f;
+                            depth[at] = z;
+                        }
+
+                        // Premultiplied over what's there
+                        f32* out = &colour[at * 4];
+                        for (u32 k = 0; k < 3; k++)
+                        {
+                            f32 lit = std::min(1.0f, texel[k] * (p0 * a.shade[k] + p1 * b.shade[k] + p2 * c.shade[k]));
+                            out[k] = lit * alpha + out[k] * (1.0f - alpha);
+                        }
+
+                        out[3] = alpha + out[3] * (1.0f - alpha);
+                    }
+                }
+            }
+        }
+    }
+
+    pixels.resize(static_cast<size_t>(width) * height);
+    for (size_t i = 0; i < pixels.size(); i++)
+    {
+        const f32* c = &colour[i * 4];
+        f32 a = std::clamp(c[3], 0.0f, 1.0f);
+        auto channel = [&](f32 v) {
+            return static_cast<u32>(std::clamp(a > 0.0f ? v / a : 0.0f, 0.0f, 1.0f) * 255.0f + 0.5f);
+        };
+        pixels[i] = channel(c[0]) | channel(c[1]) << 8 | channel(c[2]) << 16 | static_cast<u32>(a * 255.0f + 0.5f) << 24;
+    }
+}
 }
 
 namespace NativeCharacters
 {
+bool RenderPreview(const std::string& folder, f32 seconds, f32 yaw, u32 width, u32 height, std::vector<u32>& pixels)
+{
+    Pack* pack = PackFor(folder);
+    if (pack == nullptr || width == 0 || height == 0)
+    {
+        return false;
+    }
+
+    RenderPack(*pack, seconds, yaw, width, height, pixels);
+    return true;
+}
+
 std::vector<std::string> Installed()
 {
     std::vector<std::string> found;
@@ -1337,12 +1674,56 @@ std::string DisplayName(const std::string& folder)
         return "Twinsanity Crash";
     }
 
-    if (folder == "woc_crash")
+    // The pack's own name (name.txt's first line), when it has one
+    std::ifstream file(CharactersFolder() / folder / "name.txt");
+    std::string line;
+    if (file && std::getline(file, line) && !line.empty())
     {
-        return "Wrath of Cortex Crash";
+        return line;
     }
 
-    return folder;
+    // Else its folder's: the game's prefix as its name, the rest in words ("cttr_crash_japan_caveman": "Tag Team Racing Crash:
+    // Japan Caveman")
+    struct Prefix
+    {
+        const char* folder;
+        const char* name;
+    };
+    constexpr Prefix Prefixes[] = {{"woc_crash", "Wrath of Cortex Crash"}, {"cttr_crash", "Tag Team Racing Crash"}};
+    std::string rest = folder;
+    std::string name;
+    for (const Prefix& prefix : Prefixes)
+    {
+        std::string start = prefix.folder;
+        if (rest.rfind(start, 0) == 0 && (rest.size() == start.size() || rest[start.size()] == '_'))
+        {
+            name = prefix.name;
+            rest = rest.size() > start.size() ? rest.substr(start.size() + 1) : "";
+            break;
+        }
+    }
+
+    std::string words;
+    bool capital = true;
+    for (char c : rest)
+    {
+        if (c == '_')
+        {
+            words += ' ';
+            capital = true;
+            continue;
+        }
+
+        words += capital ? static_cast<char>(std::toupper(static_cast<unsigned char>(c))) : c;
+        capital = false;
+    }
+
+    if (name.empty())
+    {
+        return words;
+    }
+
+    return words.empty() ? name : name + ": " + words;
 }
 
 bool DrawInstead(InstanceContext* instance, GameOGI* ogi, OgiAnimator* animator, const Matrix4x4* matrix, const ChunkLights* lights,
