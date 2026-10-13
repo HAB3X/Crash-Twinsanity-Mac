@@ -1,7 +1,7 @@
 # Working on the decomp
 
 How the decomp is put together, how builds get tested and what replacing the game's code has to look out for. Setting up and
-building are in the [README](../README.md).
+building are in [BUILDING.md](BUILDING.md).
 
 ## Symbols and the split
 
@@ -121,7 +121,7 @@ instance queries' filters), `place.cpp` (an object's place: its matrix and its p
 | `retired.txt` | The game's functions left out of the link whose work the C++ does under other names (the PS2 start-up, the timer, the disk manager's list helpers) |
 | `fragments.txt` | Bytes between functions that splat split off as functions but nothing reaches (stray epilogues, dead stores, padding after a function's last jump), left out of the link |
 | `tools/` | The split, the linker script, the checks and the PCSX2 runner |
-| `.clangd` | clangd's flags for the C++ (the README's editor setup) |
+| `.clangd` | clangd's flags for the C++ (BUILDING.md's editor setup) |
 | `local.json` | This machine's paths (git-ignored, `tools/local_config.py` reads it; `local.example.json` shows it) |
 
 `configure.py` compiles `src/**/*.cpp` (the platform side picked by `PLATFORM`, `ps2` by default). A function a C++ file defines
