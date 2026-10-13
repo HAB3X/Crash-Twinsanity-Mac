@@ -223,7 +223,7 @@ It has no `onfoot_death`, `onfoot_impact`, `onfoot_idle_arm_farts` or `onfoot_mo
 | Tag Team Racing clip | Frames | Fight tree state | Twinsanity state | Copied as (WoC name) |
 |---|---|---|---|---|
 | `onfoot_idle` | 42 (41 looped) | `onfoot_idle` (Locomotion: idle, with walk at speed 1 and run at speed 2) | Idle | `b/idle` |
-| `onfoot_walk` | 25 | Locomotion's walk | Walk, tiptoe | `a/walk` |
+| `onfoot_walk` | 25 | Locomotion's walk | Walk, tiptoe | `a/walk`, `a/tiptoe` |
 | `onfoot_run` | 17 | Locomotion's run | Run | `a/run`, `a/sprint` |
 | `onfoot_jump_takeoff` | 7 | `onfoot_jump_takeoff` | Jump (its start) | first part of `b/jump`, `a/runjump` |
 | `onfoot_jump_rise` | 15 | `onfoot_jump_rise` | Jump (going up) | second part of `b/jump`, `a/runjump` |
@@ -234,17 +234,17 @@ It has no `onfoot_death`, `onfoot_impact`, `onfoot_idle_arm_farts` or `onfoot_mo
 | `onfoot_doublejump_recover`, `_bounce` | 26, 21 | Its landing, a bounce | Land after a double jump | |
 | `onfoot_bellyflop_antic`, `_fall`, `_land` | 9, 7, 29 | Belly flop | Body slam | `a/bodyslam` (antic + fall) |
 | `onfoot_spin` | 27 | `onfoot_spinning` | Spin | Not in the pack: the spin model's skeleton |
-| `onfoot_spinkick_recover`, `_recover_run` | 31, 17 | After the spin, standing or running | The spin's end | `a/spin`: the first 5 frames (arms out), which the port turns round as it does WoC's spin pose |
+| `onfoot_spinkick_recover`, `_recover_run` | 31, 17 | After the spin, standing or running | The spin's end | `a/spin` and `d/cptrspin`: the first 5 frames (arms out), which the port turns round as it does WoC's copter spin |
 | `onfoot_edgehang_catch` | 27 | Grab a ledge | Ledge grab | |
 | `onfoot_edgehang_idle` | 61 (60 looped) | Hang | Hang | `b/hngabout` |
 | `onfoot_edgehang_left_*`, `_right_*` | 7 to 22 | Shuffle along the ledge | Hang and move | `b/hngwalk` (left loop) |
 | `onfoot_edgehang_springup`, `_recover` | 13, 13 | Climb up | Pull up | `b/hngpulup` (both) |
 | `onfoot_death` | 96 | `onfoot_resetting` | Death | `b/die` |
 | `onfoot_impact` | 54 | `impact` (hit) | Hurt | |
-| `onfoot_longidle_chickenkick`, `_nausea`, `_idle_arm_farts` | 293, 146, 246 | Long idle | Idle fidgets | |
-| `onfoot_itchy` | 141 | | Idle fidget | `b/itch` |
+| `onfoot_longidle_chickenkick`, `_nausea`, `_idle_arm_farts` | 293, 146, 246 | Long idle | Idle fidgets | `e/pickear` (the nausea) |
+| `onfoot_itchy` | 141 | | Idle fidget | `b/itch`, `b/scratch` |
 | `onfoot_lipsync_*`, `onfoot_mouthflap` | 42, 51 | Talking in cutscenes (NIS) | | |
-| The 21 acting clips (`onfoot_wave`, `_thumbs_up`, `_sad`, `_afraid`, `_confused`, `_begging`, `_blankstare`, ...) | 42 to 381 | Hub conversations | | |
+| The 21 acting clips (`onfoot_wave`, `_thumbs_up`, `_sad`, `_afraid`, `_confused`, `_begging`, `_blankstare`, ...) | 42 to 381 | Hub conversations | | `b/sigh` (`onfoot_sad`) |
 
 Twinsanity's slide, crawl and crouch (`a/slidattk`, `a/crawl`, `a/crchdwn`, `a/crchidle`, `a/crchstnd` in the mapping), swim and
 wade, tightrope and pole states have nothing matching in Tag Team Racing: the port's mapping falls back to its default (the idle).

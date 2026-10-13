@@ -656,6 +656,12 @@ WOC_NAMES = [
     ("b/hngwalk", ["onfoot_edgehang_left_loop"]),
     ("b/hngpulup", ["onfoot_edgehang_springup", "onfoot_edgehang_springup_recover"]),
     ("b/itch", ["onfoot_itchy"]),
+    # woc-character 7b64ca0's mapping: creeping, the spin as WoC's copter spin, the idle fidgets
+    ("a/tiptoe", ["onfoot_walk"]),
+    ("d/cptrspin", [("onfoot_spinkick_recover", 0, 5)]),
+    ("b/scratch", ["onfoot_itchy"]),
+    ("e/pickear", ["onfoot_nausea"]),
+    ("b/sigh", ["onfoot_sad"]),
 ]
 
 
