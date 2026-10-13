@@ -5,6 +5,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -119,8 +120,12 @@ void SnapshotFrame()
         return;
     }
 
+    // $TWIN_SNAPSHOT_EVERY=SECONDS: another spacing (a short one for a sequence of a moment)
+    static const std::chrono::duration<double> every(std::getenv("TWIN_SNAPSHOT_EVERY") != nullptr
+                                                         ? std::atof(std::getenv("TWIN_SNAPSHOT_EVERY"))
+                                                         : 2.0);
     auto now = std::chrono::steady_clock::now();
-    if (g_Count != 0 && now - g_Last < std::chrono::seconds(2))
+    if (g_Count != 0 && now - g_Last < every)
     {
         return;
     }

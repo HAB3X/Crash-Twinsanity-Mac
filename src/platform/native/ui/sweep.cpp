@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 namespace NativeUi
 {
@@ -212,6 +213,59 @@ void SweepInput(BoundPad* pad)
     // The save test drives the pause menu itself
     if (!SweepActive() || !g_Playing || SaveTestActive())
     {
+        return;
+    }
+
+    // $TWIN_SWEEP_INPUT=STEPS: the input scripted instead, steps of play time "FROM-TO:BUTTONS:DEGREES:PUSH" separated by ";"
+    // (BUTTONS of X, S, C and T for cross, square, circle and triangle, or -; the stick's direction and its push from 0 to 1,
+    // none when PUSH is 0), the last step's end looping round to 0
+    static const char* script = std::getenv("TWIN_SWEEP_INPUT");
+    if (script != nullptr)
+    {
+        struct Step
+        {
+            f32 from, to, degrees, push;
+            u32 buttons;
+        };
+        static std::vector<Step> steps;
+        if (steps.empty())
+        {
+            std::string text = script;
+            size_t at = 0;
+            while (at < text.size())
+            {
+                size_t end = text.find(';', at);
+                std::string item = text.substr(at, end == std::string::npos ? std::string::npos : end - at);
+                at = end == std::string::npos ? text.size() : end + 1;
+                Step step = {};
+                char buttons[8] = {};
+                if (std::sscanf(item.c_str(), "%f-%f:%7[XSCT-]:%f:%f", &step.from, &step.to, buttons, &step.degrees,
+                                &step.push) == 5)
+                {
+                    for (const char* b = buttons; *b != 0; b++)
+                    {
+                        step.buttons |= *b == 'X' ? PadBitCross : *b == 'S' ? PadBitSquare : *b == 'C' ? PadBitCircle
+                                      : *b == 'T' ? PadBitTriangle : 0u;
+                    }
+
+                    steps.push_back(step);
+                }
+            }
+        }
+
+        f32 length = steps.empty() ? 1.0f : steps.back().to;
+        f32 now = std::fmod(g_Played, length);
+        for (const Step& step : steps)
+        {
+            if (now >= step.from && now < step.to)
+            {
+                f32 radians = step.degrees * 3.14159265f / 180.0f;
+                pad->leftX = static_cast<u8>(128.0f + std::sin(radians) * 127.0f * step.push);
+                pad->leftY = static_cast<u8>(128.0f - std::cos(radians) * 127.0f * step.push);
+                pad->buttons |= step.buttons;
+            }
+        }
+
         return;
     }
 
