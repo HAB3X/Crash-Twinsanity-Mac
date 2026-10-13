@@ -63,9 +63,13 @@ constexpr OptionInfo Infos[OptionCount] = {
     {OptionMouseLook, "mouse_look", 1, 1},
     {OptionMouseSensitivity, "mouse_sensitivity", 5, 10},
     {OptionInvertMouseY, "invert_mouse_y", 0, 1},
+    {OptionCharacterMovement, "character_movement", 0, 1},
 };
 
 s32 g_Values[OptionCount];
+// The character played (a pack's folder, "" Twinsanity's own)
+std::string g_Character;
+constexpr const char* CharacterName = "character";
 bool g_Read = false;
 bool g_Saving = true;
 
@@ -107,6 +111,12 @@ void Read()
         }
 
         std::string name = line.substr(0, equals);
+        if (name == CharacterName)
+        {
+            g_Character = line.substr(equals + 1);
+            continue;
+        }
+
         int value = std::atoi(line.c_str() + equals + 1);
         for (const OptionInfo& info : Infos)
         {
@@ -133,6 +143,8 @@ void Save()
     {
         file << info.name << "=" << g_Values[info.option] << "\n";
     }
+
+    file << CharacterName << "=" << g_Character << "\n";
 }
 
 bool WatchEvent(void*, SDL_Event* event)
@@ -195,6 +207,22 @@ s32 GetOption(Option option)
 {
     Read();
     return g_Values[option];
+}
+
+std::string CharacterChoice()
+{
+    Read();
+    return g_Character;
+}
+
+void SetCharacterChoice(const std::string& folder)
+{
+    Read();
+    if (g_Character != folder)
+    {
+        g_Character = folder;
+        Save();
+    }
 }
 
 bool IsOn(Option option)

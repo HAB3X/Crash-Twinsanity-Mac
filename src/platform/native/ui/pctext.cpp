@@ -618,6 +618,16 @@ const NativeTextLine g_NativeTexts[] = {
     {TextDescMouseLook, {"move the camera with the mouse while playing.", "la souris tourne la caméra en jeu.", "die maus dreht die kamera im spiel.", "el ratón mueve la cámara al jugar.", "il mouse muove la telecamera in gioco."}},
     {TextDescMouseSensitivity, {"how fast the mouse turns the camera.", "la vitesse de la caméra à la souris.", "wie schnell die maus die kamera dreht.", "lo rápido que el ratón gira la cámara.", "quanto velocemente il mouse gira la telecamera."}},
     {TextDescInvertMouseY, {"moving the mouse up looks down.", "souris vers le haut : la caméra baisse.", "maus hoch blickt nach unten.", "ratón arriba mira hacia abajo.", "mouse in alto guarda in basso."}},
+    {TextTabCharacters, {"characters", "personnages", "figuren", "personajes", "personaggi"}},
+    {TextCharacter, {"character", "personnage", "figur", "personaje", "personaggio"}},
+    {TextDescCharacter, {"who you play as: twinsanity's crash or a character pack made from your own disc.", "votre personnage : le crash de twinsanity ou un pack tiré de votre propre disque.", "ihre figur: twinsanitys crash oder ein paket von ihrer eigenen disc.", "tu personaje: el crash de twinsanity o un paquete de tu propio disco.", "il tuo personaggio: il crash di twinsanity o un pacchetto dal tuo disco."}},
+    {TextDescNoPacks, {"no character packs yet: native/tools/woc_character.py makes one from your wrath of cortex disc.", "aucun pack : native/tools/woc_character.py en crée un depuis votre disque wrath of cortex.", "keine pakete: native/tools/woc_character.py macht eins von ihrer wrath of cortex disc.", "sin paquetes: native/tools/woc_character.py crea uno desde tu disco de wrath of cortex.", "nessun pacchetto: native/tools/woc_character.py ne crea uno dal tuo disco di wrath of cortex."}},
+    {TextMovement, {"movement", "mouvement", "bewegung", "movimiento", "movimento"}},
+    {TextDescMovement, {"twinsanity: twinsanity's moves on the new model. original: its own game's, not available yet.", "twinsanity : les mouvements de twinsanity. original : ceux de son jeu, pas encore disponible.", "twinsanity: twinsanitys bewegungen. original: die seines spiels, noch nicht verfügbar.", "twinsanity: los movimientos de twinsanity. original: los de su juego, aún no disponible.", "twinsanity: i movimenti di twinsanity. originale: quelli del suo gioco, non ancora disponibile."}},
+    {TextMovementTwinsanity, {"twinsanity", "twinsanity", "twinsanity", "twinsanity", "twinsanity"}},
+    {TextMovementOriginal, {"original (not yet)", "original (pas encore)", "original (noch nicht)", "original (aún no)", "originale (non ancora)"}},
+    {TextPreviewDrag, {"drag to turn", "glisser pour tourner", "ziehen zum drehen", "arrastra para girar", "trascina per girare"}},
+    {TextPreviewLevel, {"seen in a level", "visible dans un niveau", "im level zu sehen", "visible en un nivel", "visibile in un livello"}},
 };
 const u32 g_NativeTextCount = sizeof(g_NativeTexts) / sizeof(g_NativeTexts[0]);
 const char* const g_TextLanguages[TextLanguages] = {"English", "French", "German", "Spanish", "Italian"};
