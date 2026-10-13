@@ -6,7 +6,7 @@ This is a work in progress and it still has bugs.
 
 ## Play
 
-Download `Crash-Twinsanity-macOS.zip` from the [releases](https://github.com/HAB3X/Crash-Twinsanity-Mac/releases), unzip it and open Crash Twinsanity. The first time, right click the app and choose Open, then pick your own PAL disc image (SLES 52568). The game is not included.
+For Apple silicon and Intel Macs. Download `Crash-Twinsanity-macOS.zip` from the [releases](https://github.com/HAB3X/Crash-Twinsanity-Mac/releases), unzip it and open Crash Twinsanity. The first time, right click the app and choose Open, then pick your own PAL disc image (SLES 52568). The game is not included.
 
 [native/PLAYING.md](native/PLAYING.md) has the controls and options.
 
@@ -23,7 +23,8 @@ Download `Crash-Twinsanity-macOS.zip` from the [releases](https://github.com/HAB
 ## Still to do
 
 * A steady 60 fps
-* Intel Macs, Linux and Windows
+* Testing on a real Intel Mac (it runs under Rosetta)
+* Linux and Windows
 * More save slots
 
 ## Building

@@ -5,8 +5,10 @@ each one's install name @rpath/<name> and every reference to it rewritten to tha
 FFmpeg is the app's own LGPL build (native/tools/build_ffmpeg.sh) when CMake linked it, with native/third_party/ffmpeg's README
 and licence in Contents/Resources/licenses/ffmpeg; a Homebrew FFmpeg (GPL 3) is bundled with a warning.
 
-    python native/tools/bundle_app.py [--app PATH] [--out DIR] [--zip]
+    python native/tools/bundle_app.py [--app PATH] [--x86-64-app PATH] [--out DIR] [--zip]
 
+--x86-64-app makes a universal app: the x86-64 build (cmake -DCMAKE_OSX_ARCHITECTURES=x86_64, native/NATIVE.md) made standalone
+the same way, and its executable and libraries joined to --app's (lipo) in one bundle, which Apple silicon and Intel Macs both run.
 It then checks: no library outside the system's left in any Mach-O of the bundle (otool -L), and the signature verifies. --zip also
 writes DIR/Crash-Twinsanity-macOS.zip (ditto, keeping the signature).
 """
@@ -15,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -57,14 +60,9 @@ def rpaths_of(binary):
     return re.findall(r"cmd LC_RPATH\n\s+cmdsize \d+\n\s+path (\S+)", text)
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--app", default=str(APP))
-    parser.add_argument("--out", default=str(OUT))
-    parser.add_argument("--zip", action="store_true")
-    arguments = parser.parse_args()
-    source = Path(arguments.app)
-    out = Path(arguments.out)
+def standalone(source, out):
+    """A copy of the app in out with its libraries in Contents/Frameworks and their licences: the app, its executable,
+    {name: library} and the licences' packages."""
     out.mkdir(parents=True, exist_ok=True)
     app = out / source.name
     if app.exists():
@@ -138,6 +136,34 @@ def main():
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(licence, target)
 
+    return app, executable, copied, packages
+
+
+def join(executable, copied, other_executable, other_copied):
+    """The other build's executable and libraries joined to these (lipo): one universal file each."""
+    if set(copied) != set(other_copied):
+        sys.exit(f"the two builds load different libraries: {', '.join(sorted(set(copied) ^ set(other_copied)))}")
+    for mine, theirs in [(executable, other_executable)] + [(copied[name], other_copied[name]) for name in copied]:
+        joined = mine.with_name(mine.name + ".universal")
+        run("lipo", "-create", str(mine), str(theirs), "-output", str(joined))
+        joined.chmod(0o755)
+        joined.replace(mine)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--app", default=str(APP))
+    parser.add_argument("--x86-64-app", help="an x86-64 build of the app, joined to --app's in a universal app")
+    parser.add_argument("--out", default=str(OUT))
+    parser.add_argument("--zip", action="store_true")
+    arguments = parser.parse_args()
+    app, executable, copied, packages = standalone(Path(arguments.app), Path(arguments.out))
+    if arguments.x86_64_app:
+        with tempfile.TemporaryDirectory() as folder:
+            _, other_executable, other_copied, other_packages = standalone(Path(arguments.x86_64_app), Path(folder))
+            join(executable, copied, other_executable, other_copied)
+            packages |= other_packages
+
     # Signed ad hoc: the libraries first, then the bundle
     for target in copied.values():
         run("codesign", "--force", "--sign", "-", str(target))
@@ -152,10 +178,10 @@ def main():
     if bad:
         sys.exit("still outside the bundle:\n" + "\n".join(bad))
     run("codesign", "--verify", "--deep", "--strict", str(app))
-    print(f"{app}: {len(copied)} libraries in Contents/Frameworks: {', '.join(sorted(copied))}")
+    print(f"{app} ({run('lipo', '-archs', str(executable)).strip()}): {len(copied)} libraries in Contents/Frameworks: {', '.join(sorted(copied))}")
     print(f"licences of: {', '.join(sorted(packages))}")
     if arguments.zip:
-        archive = out / "Crash-Twinsanity-macOS.zip"
+        archive = Path(arguments.out) / "Crash-Twinsanity-macOS.zip"
         archive.unlink(missing_ok=True)
         run("ditto", "-c", "-k", "--keepParent", str(app), str(archive))
         print(archive)

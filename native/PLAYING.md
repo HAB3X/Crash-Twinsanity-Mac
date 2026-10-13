@@ -5,8 +5,9 @@ you need your own copy of the game.
 
 ## What you need
 
-- A Mac with Apple silicon (M1 or later), running a recent macOS. The app is built for Apple silicon only: Intel Macs aren't
-  supported.
+- A Mac running a recent macOS, with Apple silicon (M1 or later) or an Intel processor. The universal app runs natively on both
+  (an older Apple silicon only release doesn't run on Intel Macs). The Intel build has been tested under Rosetta on Apple
+  silicon, not yet on a real Intel Mac; it wants a fast one, since the PS2's vector units' programs run on the processor.
 - A disc image of **your own** PAL copy of Crash Twinsanity (Europe/Australia, SLES-52568), as an `.iso` (or `.bin`/`.img`).
   Other versions (USA, Japan) aren't supported.
 
@@ -84,6 +85,11 @@ From the repository, with the native build configured (native/NATIVE.md):
 This builds the game and makes `build/native/dist/Crash Twinsanity.app` (standalone: its libraries inside, no Homebrew needed)
 and `build/native/dist/Crash-Twinsanity-macOS.zip`. Our own LGPL FFmpeg is used when `native/tools/build_ffmpeg.sh` has been run.
 
+That app is Apple silicon only. The universal one also needs the Intel build (native/NATIVE.md, "Intel Macs"), then:
+
+    python3 native/tools/bundle_app.py --app "build/native/cmake/Crash Twinsanity.app" \
+        --x86-64-app "build/native/cmake-x86_64/Crash Twinsanity.app" --zip
+
 ## Licences
 
 The game's code here is a decompilation for preservation and study; Crash Twinsanity and its content belong to their owners.
@@ -93,5 +99,5 @@ Fredoka (SIL Open Font Licence) and stb_truetype (public domain / MIT); their li
 (`licenses/ffmpeg` has FFmpeg's, with how it was built).
 
 FFmpeg's libraries are separate files you can replace with your own build: `libavcodec.63.dylib` and `libavutil.61.dylib` in
-`Crash Twinsanity.app/Contents/Frameworks/` (FFmpeg 9.x, with the `mpeg2video` decoder). Then sign the app again with
+`Crash Twinsanity.app/Contents/Frameworks/` (FFmpeg 9.x, with the `mpeg2video` decoder; in the universal app, built for both processors and joined with `lipo`). Then sign the app again with
 `codesign --force --deep --sign - "Crash Twinsanity.app"`. `Contents/Resources/licenses/ffmpeg/README.md` has the details.

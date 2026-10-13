@@ -11,7 +11,7 @@ the C++ was checked against. The repository has none of the game's code or data.
 splits its executable on your machine.
 
 **Playing on a Mac:** download `Crash-Twinsanity-macOS.zip` from the [releases](https://github.com/HAB3X/Crash-Twinsanity-Mac/releases)
-and read [native/PLAYING.md](../native/PLAYING.md). It needs an Apple silicon Mac and your own PAL disc image (SLES-52568).
+and read [native/PLAYING.md](../native/PLAYING.md). It needs a Mac (Apple silicon, or Intel with the universal app) and your own PAL disc image (SLES-52568).
 
 [DEVELOPMENT.md](DEVELOPMENT.md) explains how the decomp is put together, the tools that test builds and what replacing
 the game's code had to look out for. [RETAIL_BUGS.md](RETAIL_BUGS.md) lists the bugs of the retail code the C++ keeps.
