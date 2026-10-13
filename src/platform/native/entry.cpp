@@ -47,6 +47,17 @@ int SelfTestLowMemory()
     f[0] = 1.5f;
     float back = f[0];
     bool ok = byte == 0x5A && signedByte == -128 && word == 0x12345678 && sum == 3 && back == 1.5f;
+#if defined(__x86_64__)
+    // The instructions of opcodes 0xF6, 0xF7 and 0xFE, 0xFF on memory (a bitfield's test, inc, neg), which the compiler makes for
+    // the retail code's reads of a null structure's bits
+    g_NativeLowMemory[0x140] = 0x02;
+    g_NativeLowMemory[0x148] = 0x07;
+    u8 tested = 0;
+    asm volatile("testb $3, 0x140(%1)\n\tsetne %0\n\tincl 0x148(%1)\n\tnegl 0x148(%1)" : "=&r"(tested) : "r"(zero) : "cc", "memory");
+    u32 changed = 0;
+    std::memcpy(&changed, &g_NativeLowMemory[0x148], sizeof(changed));
+    ok = ok && tested == 1 && changed == static_cast<u32>(-8);
+#endif
     Native::Log("low memory self-test: %s (byte %#x, signed %d, word %#x, sum %llu, float %g)", ok ? "passed" : "FAILED", byte,
                 signedByte, word, static_cast<unsigned long long>(sum), back);
     return ok ? 0 : 1;

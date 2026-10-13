@@ -526,8 +526,14 @@ bool FindMemoryOperand(const u8* p, int* base, int* index, int* scale)
             }
         }
         else if ((op >= 0xA0 && op <= 0xA7) || (op >= 0xAA && op <= 0xAF) || op == 0xD7 || (op >= 0x50 && op <= 0x5F) ||
-                 (op >= 0x70 && op <= 0x7F) || (op >= 0xB0 && op <= 0xBF) || (op >= 0x90 && op <= 0x9F) || op >= 0xE0)
+                 (op >= 0x70 && op <= 0x7F) || (op >= 0xB0 && op <= 0xBF) || (op >= 0x90 && op <= 0x9F) ||
+                 (op >= 0xE0 && op <= 0xF5) || (op >= 0xF8 && op <= 0xFD))
         {
+            return false;
+        }
+        else if (op == 0xFF && ((*p >> 3) & 7) >= 2 && ((*p >> 3) & 7) <= 5)
+        {
+            // A call or jump through a pointer read from low memory: it crashes as on the PS2
             return false;
         }
     }
