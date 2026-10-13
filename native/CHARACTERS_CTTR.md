@@ -251,15 +251,17 @@ wade, tightrope and pole states have nothing matching in Tag Team Racing: the po
 
 ## In the game
 
-Tested with woc-character's loader (6cd3d9b): one headless beach run (`TWIN_CHARACTER=cttr_crash`, `--snapshots`,
-`TWINSANITY_AUDIO=off`, a scratch HOME) with a scripted run, jumps and a walk (`TWIN_SWEEP_INPUT`).
+Tested with woc-character's loader (9e1d063, textures up to 512x512), at full size. The test was one headless beach run
+(`TWIN_CHARACTER=cttr_crash`, `--snapshots`, `TWINSANITY_AUDIO=off`, a scratch HOME) with a scripted run, jumps, a double
+jump, a spin and a walk (`TWIN_SWEEP_INPUT`).
 
-- The pack loads with 39 joints, 2 materials, 1 texture and 72 animations.
+- The pack loads with 39 joints, 2 materials, its 256x256 texture and 77 animations.
 - It is scaled to Twinsanity Crash's height and drawn textured and lit in his place, facing his way.
-- The mapping's slots show `b/idle`, `a/run`, `a/runjump`, `b/jump` and `a/land` as the trace logs them, and the snapshots show
-  the run and the jumps.
+- The trace logs the mapping's slots showing the Tag Team Racing clips: `b/idle`, `a/sprint` (the run, paced to the ground
+  speed), `a/runjump`, `a/run`, `b/jump`, `a/starjump`, `a/land`, `d/cptrspin` and `b/scratch`.
+- The snapshots show the run, the jumps and the spin.
 
-That loader refused textures over 64 KB, so the test pack was made with `--max-texture 128`.
+An earlier loader (6cd3d9b) refused textures over 64 KB; `--max-texture 128` made a pack it took.
 
 ## What the pack can't express
 
