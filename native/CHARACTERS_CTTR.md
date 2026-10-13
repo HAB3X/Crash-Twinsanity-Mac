@@ -316,16 +316,28 @@ executable's strings name the classes:
 **What exists for the code:**
 
 - The GameCube decomp (`cttr-decomp-gc`, CC0, about 45,000 symbols) names `Avatar::InitializeForWalking`, `OnFootManager_Get`,
-  `OnFootRenderer_Get` and `GlobalFightTreeNode_Get`. Most of the on-foot code is unnamed functions, so finding the locomotion
-  means following from those, then matching the stripped PS2 executable (Ghidra's function matching).
-- Nobody has decompiled choreo or ravenphysics.
+  `OnFootRenderer_Get` and `GlobalFightTreeNode_Get`. It names nothing of the on-foot movement.
+- Nobody else has decompiled choreo or ravenphysics.
 - The leaked Simpsons: Hit & Run source must not be used, nor anything derived from it.
 
-**A practical middle way:**
+**Our own decompilation.** The retail PS2 executable is decompiled in Ghidra with the EmotionEngine extension; the project and
+notes are in `~/Documents/decomps/cttr-ours/`. The movement is found and reimplemented: the mover, constructed at 0x21E3E0 and
+updated at 0x21E750.
 
-1. Run the fight tree's state machine natively, with the conditions answered from Twinsanity's own player state (jumping,
-   falling, on a ledge...).
-2. Measure Tag Team Racing Crash's run speed, jump arc and double-jump height in PCSX2.
-3. Tune a new character kind to them.
+- **Across the ground** (0x22C460): a velocity that speeds up towards the stick and slows by itself, at 48 units/s^2 each way
+  standing (a quarter second to the top speed of 12), half that in the air.
+- **Up and down:** no gravity. Cubic arcs per vertical mode (0x22CDF0, 0x22C2D8; tables at 0x5124A8, 0x5124C0, 0x559128):
+  - the jump rises 4.1 over 0.4 s along `1 - (1 - t)^3`, stopping at the top;
+  - the fall drops along `t^3` (4.1 in its first 0.4 s), held to 30 units/s;
+  - the double jump adds 2.1 over 0.4 s, allowed once, while rising or in the fall's first 0.4 s;
+  - the belly flop holds 0.3 s, then falls with its arcs 1.3 times as fast.
+- **The conditions:** the fight tree's conditions are a table of names and functions at 0x512298. IsJumping, IsFalling and the
+  others read the mover's vertical mode.
 
-ROADMAP stage 3 estimates this at about two weeks, against months for the faithful code.
+`src/platform/native/cttrmovement.{h,cpp}` is the reimplementation, checked by `native/cttr-tests/movement_test.cpp`. The host
+keeps its own collision: it gives the model the stick, the buttons and whether the character stands, and moves him by the
+displacement the model returns. `Tuning::scale` turns retail units into the host's: 0.756 for Twinsanity, whose Crash is 1.95
+tall against Tag Team Racing's 2.58.
+
+Not wired into the game yet: the character system on woc-character owns the player's physics choice. The ledges (mode 5, a hit
+test against the world definition's edges) and the spin attack's movement are still to read.
