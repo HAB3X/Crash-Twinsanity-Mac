@@ -86,6 +86,10 @@ void Native::ParseArguments(int& argc, char** argv)
         {
             Native::SetQuickStart(true);
         }
+        else if (std::strcmp(argv[i], "--level") == 0 && i + 1 < argc)
+        {
+            Native::SetStartChunk(argv[++i]);
+        }
         else if (std::strcmp(argv[i], "--headless") == 0)
         {
             g_Settings.headless = true;

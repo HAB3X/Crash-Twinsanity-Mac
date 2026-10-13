@@ -28,6 +28,8 @@ void SetSnapshotFolder(const char* folder);
 void SnapshotFrame();
 // --quick: straight to playing the beach (quickstart.cpp), checked once a frame
 void SetQuickStart(bool quick);
+// --level CHUNK: the game started in that chunk (quickstart.cpp)
+void SetStartChunk(const char* chunk);
 void QuickStartFrame();
 
 // The log (stderr): the platform's messages, prefixed
