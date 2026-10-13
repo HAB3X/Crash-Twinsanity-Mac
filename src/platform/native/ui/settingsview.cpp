@@ -540,7 +540,7 @@ constexpr f32 CellWidth = 132.0f;
 // ---------------------------------------------------------------------------------------------------------------- the screen
 // The Characters tab's layout: the rows' width and their values' (the panel's left), the preview's box (its right)
 constexpr f32 CharacterRowsWidth = 470.0f;
-constexpr f32 CharacterValueWidth = 240.0f;
+constexpr f32 CharacterValueWidth = 280.0f;
 constexpr f32 PreviewX = PanelX + PanelPadX + CharacterRowsWidth + 16.0f;
 constexpr f32 PreviewY = PanelY + PanelPadY;
 constexpr f32 PreviewWidth = PanelX + PanelWidth - PanelPadX - PreviewX;
@@ -831,7 +831,7 @@ void DrawSettingsView(OverlayFrame& frame, std::vector<HitRegion>& regions)
         {
             std::string value = Sentence(Dimensions(row.valueText(row.get())));
             ChoiceValue(frame, value, valueCentre, middle, colours, index, top, regions,
-                        characters ? CharacterValueWidth + 40.0f : 1e9f);
+                        characters ? CharacterValueWidth : 1e9f);
             break;
         }
         case RowSlider:
