@@ -12,7 +12,7 @@ like the Wrath of Cortex pack. Nothing of the game's goes into the repository: t
 - `--preview` draws frames (PNG) and animated GIFs of the idle, run, walk and jump from the pack's own data.
 - `--max-texture N` halves textures with a side over N (by default they keep their full size).
 
-Worked out on the USA disc (SLUS_211.91). Converting the classic costume takes about 15 s and writes 8.6 MB.
+Worked out on the USA disc (SLUS_211.91). Converting the classic costume takes about 15 s and writes 8.7 MB.
 
 ## The disc's archives (RCF)
 
@@ -221,11 +221,11 @@ It has no `onfoot_death`, `onfoot_impact`, `onfoot_idle_arm_farts` or `onfoot_mo
 | `onfoot_jump_fall` | 13 | `onfoot_jump_fall` | Fall | `f/fall`, `g/longfall` |
 | `onfoot_jump_landing` | 35 | `onfoot_jump_landing` | Land | `a/land` |
 | `onfoot_jump_switch` | 9 | `onfoot_doublejump_hang` | Double jump's top | |
-| `onfoot_doublejump_start` | 36 | `onfoot_doublejump_start` (a somersault) | Double jump | |
+| `onfoot_doublejump_start` | 36 | `onfoot_doublejump_start` (a somersault) | Double jump | `a/starjump` |
 | `onfoot_doublejump_recover`, `_bounce` | 26, 21 | Its landing, a bounce | Land after a double jump | |
 | `onfoot_bellyflop_antic`, `_fall`, `_land` | 9, 7, 29 | Belly flop | Body slam | `a/bodyslam` (antic + fall) |
 | `onfoot_spin` | 27 | `onfoot_spinning` | Spin | Not in the pack: the spin model's skeleton |
-| `onfoot_spinkick_recover`, `_recover_run` | 31, 17 | After the spin, standing or running | The spin's end | |
+| `onfoot_spinkick_recover`, `_recover_run` | 31, 17 | After the spin, standing or running | The spin's end | `a/spin`: the first 5 frames (arms out), which the port turns round as it does WoC's spin pose |
 | `onfoot_edgehang_catch` | 27 | Grab a ledge | Ledge grab | |
 | `onfoot_edgehang_idle` | 61 (60 looped) | Hang | Hang | `b/hngabout` |
 | `onfoot_edgehang_left_*`, `_right_*` | 7 to 22 | Shuffle along the ledge | Hang and move | `b/hngwalk` (left loop) |
@@ -237,8 +237,20 @@ It has no `onfoot_death`, `onfoot_impact`, `onfoot_idle_arm_farts` or `onfoot_mo
 | `onfoot_lipsync_*`, `onfoot_mouthflap` | 42, 51 | Talking in cutscenes (NIS) | | |
 | The 21 acting clips (`onfoot_wave`, `_thumbs_up`, `_sad`, `_afraid`, `_confused`, `_begging`, `_blankstare`, ...) | 42 to 381 | Hub conversations | | |
 
-Twinsanity's slide, crawl and crouch, swim and wade, tightrope and pole states have nothing matching in Tag Team Racing: the
-port's mapping falls back to its default (the idle).
+Twinsanity's slide, crawl and crouch (`a/slidattk`, `a/crawl`, `a/crchdwn`, `a/crchidle`, `a/crchstnd` in the mapping), swim and
+wade, tightrope and pole states have nothing matching in Tag Team Racing: the port's mapping falls back to its default (the idle).
+
+## In the game
+
+Tested with woc-character's loader (6cd3d9b): one headless beach run (`TWIN_CHARACTER=cttr_crash`, `--snapshots`,
+`TWINSANITY_AUDIO=off`, a scratch HOME) with a scripted run, jumps and a walk (`TWIN_SWEEP_INPUT`).
+
+- The pack loads with 39 joints, 2 materials, 1 texture and 72 animations.
+- It is scaled to Twinsanity Crash's height and drawn textured and lit in his place, facing his way.
+- The mapping's slots show `b/idle`, `a/run`, `a/runjump`, `b/jump` and `a/land` as the trace logs them, and the snapshots show
+  the run and the jumps.
+
+That loader refused textures over 64 KB, so the test pack was made with `--max-texture 128`.
 
 ## What the pack can't express
 
