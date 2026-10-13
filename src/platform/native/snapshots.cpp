@@ -3,8 +3,11 @@
 #include "graphics/display.h"
 #include "native.h"
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -17,13 +20,25 @@ u32 g_Count = 0;
 
 u32 Crc(const u8* data, size_t size, u32 crc = 0xFFFFFFFF)
 {
+    // A table a byte (a short spacing snapshots most frames)
+    static const auto table = [] {
+        std::array<u32, 256> values{};
+        for (u32 n = 0; n < 256; n++)
+        {
+            u32 c = n;
+            for (int bit = 0; bit < 8; bit++)
+            {
+                c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1)));
+            }
+
+            values[n] = c;
+        }
+
+        return values;
+    }();
     for (size_t i = 0; i < size; i++)
     {
-        crc ^= data[i];
-        for (int bit = 0; bit < 8; bit++)
-        {
-            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1)));
-        }
+        crc = table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
     }
 
     return crc;
@@ -112,6 +127,11 @@ void SetSnapshotFolder(const char* folder)
     std::filesystem::create_directories(g_Folder);
 }
 
+u32 SnapshotsTaken()
+{
+    return g_Count;
+}
+
 void SnapshotFrame()
 {
     if (g_Folder.empty())
@@ -119,8 +139,12 @@ void SnapshotFrame()
         return;
     }
 
+    // $TWIN_SNAPSHOT_EVERY=SECONDS: another spacing (a short one for a sequence of a moment)
+    static const std::chrono::duration<double> every(std::getenv("TWIN_SNAPSHOT_EVERY") != nullptr
+                                                         ? std::atof(std::getenv("TWIN_SNAPSHOT_EVERY"))
+                                                         : 2.0);
     auto now = std::chrono::steady_clock::now();
-    if (g_Count != 0 && now - g_Last < std::chrono::seconds(2))
+    if (g_Count != 0 && now - g_Last < every)
     {
         return;
     }
@@ -137,7 +161,11 @@ void SnapshotFrame()
     // Kept to 1024 wide at most (every other pixel of a bigger picture: a 4x picture's snapshot is 16 MB otherwise, its PNG
     // uncompressed, and a long test run fills the disk)
     u32 step = 1;
-    while (picture.width / step > 1024)
+    // $TWIN_SNAPSHOT_WIDTH: kept narrower still (long sequences)
+    static const u32 widest = std::getenv("TWIN_SNAPSHOT_WIDTH") != nullptr
+                                  ? static_cast<u32>(std::max(64, std::atoi(std::getenv("TWIN_SNAPSHOT_WIDTH"))))
+                                  : 1024u;
+    while (picture.width / step > widest)
     {
         step *= 2;
     }

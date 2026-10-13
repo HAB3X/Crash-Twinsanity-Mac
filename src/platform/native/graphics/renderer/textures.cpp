@@ -216,6 +216,70 @@ extern "C"
         return WriteTextureUpload(context, packet, texture, slot);
     }
 
+    TextureSlot* ClaimTextureSlot(Texture* texture, u32 bucket, bool large, bool* upload)
+    {
+        // UploadTexture's choice, with the upload left to the caller
+        u32 bit = 1u << (bucket & ShiftMask);
+        TextureSlot* slot = texture->slot;
+        *upload = true;
+        if (slot != nullptr)
+        {
+            slot->used = g_TextureTime++;
+            *upload = (slot->buckets & bit) == 0;
+            slot->buckets |= bit;
+            return slot;
+        }
+
+        if (large || texture->levelWidths[0] >= LargeTextureWidth)
+        {
+            slot = &g_LargeTextureSlot;
+            if (slot->owner != nullptr)
+            {
+                slot->owner->slot = nullptr;
+            }
+
+            slot->owner = texture;
+            slot->used = g_TextureTime++;
+            slot->buckets = bit;
+            texture->slot = slot;
+            return slot;
+        }
+
+        RenderBucket& frameBucket = g_FrameBuckets.buckets[bucket];
+        u32 count = g_TextureSlotCount;
+        u32 index = g_TextureSlotNext;
+        u32 time = g_TextureTime;
+        for (u32 rounds = 0; slot == nullptr && rounds != MaxRounds;)
+        {
+            TextureSlot& candidate = g_TextureSlots[index];
+            if ((candidate.used < time - count + UseMargin || candidate.owner == nullptr) &&
+                frameBucket.lastSlotAddress != candidate.gsAddress)
+            {
+                if (candidate.owner != nullptr)
+                {
+                    candidate.owner->slot = nullptr;
+                }
+
+                candidate.used = time++;
+                candidate.owner = texture;
+                candidate.buckets = bit;
+                texture->slot = &candidate;
+                frameBucket.lastSlotAddress = candidate.gsAddress;
+                slot = &candidate;
+            }
+
+            if (++index == count)
+            {
+                index = 0;
+                rounds++;
+            }
+        }
+
+        g_TextureTime = time;
+        g_TextureSlotNext = index;
+        return slot;
+    }
+
     u8* WriteTextureUpload(void*, u8* packet, Texture* texture, TextureSlot* slot)
     {
         u8* transfer = DiskLoadedMemory(GetDiskManager(), &texture->transfer);
