@@ -9,7 +9,8 @@ like the Wrath of Cortex pack. Nothing of the game's goes into the repository: t
 - The pack goes to the settings folder's `characters/cttr_crash/` (`characters/cttr_crash_<costume>/` for another costume).
 - `TWIN_CHARACTER=cttr_crash`, or the Characters page, picks it.
 - `--list` prints the costumes and the animation clips.
-- `--preview` draws frames of the idle, run, walk and jump from the pack's own data.
+- `--preview` draws frames (PNG) and animated GIFs of the idle, run, walk and jump from the pack's own data.
+- `--max-texture N` halves textures with a side over N (by default they keep their full size).
 
 Worked out on the USA disc (SLUS_211.91). Converting the classic costume takes about 15 s and writes 8.6 MB.
 
@@ -160,8 +161,9 @@ flags. Its strips join through repeated vertices, which make degenerate triangle
   anyway.
 - **Triangles** are wound by their normals (`oriented`, as in `woc_character.py`). A group with vertex colours instead of normals
   gets normals from its faces, made to agree across shared edges and turned outward.
-- **Textures:** the port's texture slots take 64 KB at most (128x128 at 32 bits), and it refuses a pack with a bigger one. The
-  classic costume's 256x256 is halved, each texel the mean of four (`fit_texture`). The other costumes' textures fit as they are.
+- **Textures** keep their full size: the classic costume's 256x256, the others' 64x64 and 128x128. `--max-texture N` halves
+  them, each texel the mean of four, until no side is over N (`--max-texture 128` for a loader that takes only 64 KB a
+  texture, as woc-character's did at fb124c9).
 - **Materials:** one a primitive group, coloured by the shader's `DIFF`. Blending comes from the shader's translucency or `BLMO`,
   or the image's alpha.
 - **Joints:** the skeleton as it is, with inverse bind matrices from the rest poses.
@@ -240,7 +242,6 @@ port's mapping falls back to its default (the idle).
 
 ## What the pack can't express
 
-- **Textures over 128x128.** The port's slots take 64 KB, so the classic Crash's 256x256 texture goes in at half its size.
 - **The spin.** Tag Team Racing swaps Crash's model for `crash_spin_model.p3d` while he spins: a tornado with its own 10-joint
   skeleton (`Feet`, `Spine`, `Head`, `Arm_1`, ... with wobble joints), its own textures (motion blur) and its own clip
   (`onfoot_spin`). The format has one model and one skeleton. The spin-kick recovery clips are in the pack, but not the spin.

@@ -5,15 +5,16 @@ weights), his skeleton and his on-foot animations, read from your own disc image
 Nothing of the game's goes into the repository.
 
     python3 native/tools/cttr_character.py "/path/to/Crash Tag Team Racing.iso"
-        [--out DIR] [--costume NAME] [--preview DIR] [--list]
+        [--out DIR] [--costume NAME] [--preview DIR] [--max-texture N] [--list]
 
 The image is the disc's .iso (or a raw 2352-byte-sector .bin). --out defaults to the settings folder's characters/cttr_crash/
 (characters/cttr_crash_<costume>/ for another costume; $HOME/Library/Application Support/Crash Twinsanity on macOS,
 $XDG_CONFIG_HOME/crash-twinsanity or ~/.config/crash-twinsanity elsewhere). --costume picks the outfit: classic (the default,
 art\\characters\\crash_onfoot_model.p3d), or blacktie, buckethead, caveman, hiphop, madscientist, naked, nega, raiders, skeleton,
-startrek, japan, japan_blacktie and the other Japanese ones (--list prints them). --preview writes PNGs of a few frames of the
-idle, run and jump (needs numpy and Pillow), drawn from the pack's own data. --list prints the costumes, the animation clips
-and the archives they were found in.
+startrek, japan, japan_blacktie and the other Japanese ones (--list prints them). --preview writes PNGs of a few frames and
+animated GIFs of the idle, run, walk and jump (needs numpy and Pillow), drawn from the pack's own data. --max-texture N halves
+textures until no side is over N texels (the classic costume's is 256x256; by default they keep their full size). --list prints
+the costumes, the animation clips and the archives they were found in.
 
 The decoding (worked out on the USA disc, SLUS_211.91; native/CHARACTERS_CTTR.md has the notes):
 - RCF ("ATG CORE CEMENT LIBRARY", version 2.1): a 32-byte signature, version bytes, then the directory's offset and size, the
@@ -40,8 +41,7 @@ The decoding (worked out on the USA disc, SLUS_211.91; native/CHARACTERS_CTTR.md
   place; a loop's last frame, a copy of its first, is dropped; the mouth flap (a partial layer) is filled from the idle; the
   spin animates the separate spin model and is left out.
 - The pack is in Wrath of Cortex's pack space (woc_character.py's): Y up, facing -Z, his left at +X, about 1 tall, the feet at 0.
-  Pure3D's Crash has the same axes at 2.58 units tall (to the hair's tip), so the conversion only scales, by SCALE. Textures
-  over the port's 64 KB slot (the classic costume's 256x256) are halved. The clips doing what the port's mapping shows by Wrath
+  Pure3D's Crash has the same axes at 2.58 units tall (to the hair's tip), so the conversion only scales, by SCALE. The clips doing what the port's mapping shows by Wrath
   of Cortex clip names (b/idle, a/run, b/jump...) are copied under those names too (WOC_NAMES).
 """
 import argparse
@@ -729,15 +729,11 @@ def oriented(vertices, triangle):
     return triangle if sum(cross[k] * normal[k] for k in range(3)) >= 0 else (triangle[0], triangle[2], triangle[1])
 
 
-# The port's texture slots take 64 KB at most (128x128 at 32 bits)
-TEXTURE_BYTES = 0x10000
-
-
-def fit_texture(texture):
-    """A texture's size and RGBA rows, halved (each texel the mean of four) until it fits the port's slot: the classic
-    costume's 256x256 becomes 128x128"""
+def fit_texture(texture, largest=None):
+    """A texture's size and RGBA rows, at full size, or halved (each texel the mean of four) until neither side is over largest
+    (--max-texture)"""
     width, height, rgba = texture["width"], texture["height"], texture["rgba"]
-    while width * height * 4 > TEXTURE_BYTES:
+    while largest and max(width, height) > largest and min(width, height) > 1:
         half = bytearray((width // 2) * (height // 2) * 4)
         for y in range(height // 2):
             for x in range(width // 2):
@@ -748,7 +744,7 @@ def fit_texture(texture):
     return width, height, rgba
 
 
-def write_pack(path, model, clips):
+def write_pack(path, model, clips, largest_texture=None):
     used = []
     for mesh in model.meshes:
         texture = model.shaders.get(mesh["shader"], {}).get("texture")
@@ -770,7 +766,7 @@ def write_pack(path, model, clips):
         out += struct.pack("<32si12f", joint["name"].encode("ascii")[:31], joint["parent"],
                            *[inverse[r][c] for r in range(4) for c in range(3)])
     for name in used:
-        width, height, rgba = fit_texture(model.textures[name])
+        width, height, rgba = fit_texture(model.textures[name], largest_texture)
         out += struct.pack("<HH", width, height) + rgba
     for mesh, vertices in meshes:
         shader = model.shaders.get(mesh["shader"], {})
@@ -993,7 +989,9 @@ def main():
     parser.add_argument("disc", help="the Crash Tag Team Racing disc image (.iso or .bin)")
     parser.add_argument("--costume", default="classic", help="the outfit (classic, caveman, japan, ...; --list prints them)")
     parser.add_argument("--out", type=Path, help="the pack's folder (the settings folder's characters/cttr_crash)")
-    parser.add_argument("--preview", type=Path, help="write PNGs of a few frames of the idle, run and jump here")
+    parser.add_argument("--preview", type=Path, help="write PNGs and GIFs of the idle, run, walk and jump here")
+    parser.add_argument("--max-texture", type=int, metavar="N",
+                        help="halve textures until no side is over N texels (default: full size)")
     parser.add_argument("--list", action="store_true", help="list the costumes and animations and stop")
     arguments = parser.parse_args()
 
@@ -1059,7 +1057,7 @@ def main():
     folder = "cttr_crash" if costume in ("classic", "crash", "") else "cttr_crash_" + costume
     out = arguments.out or settings_folder() / "characters" / folder
     out.mkdir(parents=True, exist_ok=True)
-    size = write_pack(out / "pack.bin", model, clips)
+    size = write_pack(out / "pack.bin", model, clips, arguments.max_texture)
     triangles = sum(len(mesh["triangles"]) for mesh in model.meshes)
     vertices = sum(len(mesh["vertices"]) for mesh in model.meshes)
     copies = sum(1 for name, _ in clips if "/" in name)
