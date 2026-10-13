@@ -34,7 +34,8 @@ The app links the libraries dynamically, so they can be replaced without touchin
 libavutil 61, any configuration that has the `mpeg2video` decoder and the `mpegvideo` parser) and put your
 `libavcodec.63.dylib` and `libavutil.61.dylib` in place of the app's, in `Crash Twinsanity.app/Contents/Frameworks/`. Their
 install names should be `@rpath/libavcodec.63.dylib` and `@rpath/libavutil.61.dylib` (`install_name_tool -id`), and libavcodec's
-reference to libavutil `@rpath/libavutil.61.dylib` (`install_name_tool -change`). Then sign the app again:
+reference to libavutil `@rpath/libavutil.61.dylib` (`install_name_tool -change`). The universal app's libraries hold both an
+arm64 and an x86-64 build (`lipo -create`; `build_ffmpeg.sh x86_64` makes the second). Then sign the app again:
 `codesign --force --deep --sign - "Crash Twinsanity.app"`. On Linux, put the `.so` files where the app's loader finds them
 (`LD_LIBRARY_PATH` works). To build the game itself against another FFmpeg, give CMake `-DTWIN_FFMPEG_DIR=<its prefix>` (a
 folder with `lib/pkgconfig/libavcodec.pc`).

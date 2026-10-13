@@ -194,17 +194,33 @@ as the native stack and heap leftovers aren't the PS2's (and one read was out of
 | Cmd48 DropAttachedObject, the attachments' launch (`commandsattach.cpp`, `attachments.cpp`) | A velocity of the stack's leftovers | None |
 | Particle trail kind 5 (`particletrails.cpp`) | Compares a vector it never sets | None |
 
-## Intel Macs (x86-64): where it stands
+## Intel Macs (x86-64)
 
-- Builds: `cmake -S native -B build/native/cmake-x86_64 -G Ninja -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_PREFIX_PATH=<an x86-64 SDL3>`
-  with FFmpeg from `native/tools/build_ffmpeg.sh x86_64`. It compiles and links; `--selftest-lowmemory` passes under Rosetta.
-- Doesn't get through a level load yet. Under Rosetta every level stopped with a SIGBUS in `LoadLinkedChunks` (a virtual call
-  jumping into data), and the run before it read the fields (offsets 0x30, 0x38, 0x40) of a null `ChunkLoader` through the low
-  memory, which the arm64 build never does: the two builds part earlier in the chunk loading. Candidates, none checked: a
-  float to integer conversion out of range (the PS2's and arm64's saturate, x86's gives 0x80000000), an integer division by zero
-  (x86 traps, the PS2's and arm64's give a value), or an uninitialised read. Debugging it needs a debugger, and attaching one
-  to a Rosetta process wedged Rosetta on the machine it was tried on (every x86-64 program hung until a restart): use a real
-  Intel Mac, or `TWIN_LOWMEM_TRACE=1` and logging only.
+The x86-64 build plays. Under Rosetta it boots, and the level sweep's 30 seconds ran on 24 of 25 chunks from every world
+(beach, hubd, bossarea, pier, cavent, cortthro, docamok1, l03chase, gpa01, airship, both psychos, bergint, ukafight, l05start,
+l05brawl, corea, throne, l10start, boiler_1, crgpa01, amberly, roof01, sch_hub). The 25th, totemex, stops on a call through a
+null pointer, as it does in the arm64 build (its sweep entry says "no character in the chunk"). Building it:
+
+    native/tools/build_ffmpeg.sh x86_64
+    cmake -S native -B build/native/cmake-x86_64 -G Ninja -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_PREFIX_PATH=<an x86-64 SDL3>
+    cmake --build build/native/cmake-x86_64
+
+and a universal app (both builds in one bundle, which Apple silicon and Intel Macs run):
+
+    python3 native/tools/bundle_app.py --app "build/native/cmake/Crash Twinsanity.app" \
+        --x86-64-app "build/native/cmake-x86_64/Crash Twinsanity.app" --zip
+
+What x86-64 needed:
+
+| Bug | Why | Fix |
+| --- | --- | --- |
+| Every level crashed loading (SIGBUS in `LoadLinkedChunks`, a virtual call jumping into data; before it, reads of a null `ChunkLoader`'s fields) | The retail code calls its virtual functions returning a bool as returning a word and tests the whole register (`ChunkLoaderBase::IsUnwanted`: `CallVirtual<u32>(...) != 0`), as the PS2 gives it. arm64 extends a bool result to 32 bits; x86-64 sets only the low byte of eax and leaves the rest as it was (clang's `setne %al` after a call returning a word), so a false read as true: the file loaders' "unwanted" went the wrong way and the chunk loading parted from the PS2's, freeing a loader still in use | `native/tools/convert_data.py`: on x86-64 the data's pointers (vtables, function tables) to a function with a result narrower than 32 bits (56 returning bool, 4 a char or short) go to a thunk that calls it and extends the result (`EXTENDED` in `build/native/data.cpp`). No C++ casts such a function to another type of pointer (checked from clang's AST) |
+| The Cavern's entrance crashed (SIGSEGV at 0x40 in `UpdateExitPointMatrix`) | A null exit point's bitfield test (`testb $3, 0x40(%rdi)`, opcode 0xF6) wasn't taken for a low memory access: the decoder (`FindMemoryOperand`, `lowmemory.cpp`) left out every opcode from 0xE0 on, which takes in 0xF6, 0xF7, 0xFE and 0xFF | Those four are decoded (a call or jump through low memory still crashes, as on the PS2); `--selftest-lowmemory` does a test, an inc and a neg |
+| Floats made integers out of range gave other values (found with `-fsanitize=float-cast-overflow` on eight levels: a trigger's check interval of 2^32 clock units in `MakeTriggerContext`, a sprite's wobble angle in `Wobble`) | The R5900's conversion and arm64's saturate (and give 0 for a negative float made unsigned); x86-64's gives 0x80000000, and a negative float made unsigned wraps. The trigger's interval came out the most negative number instead of the largest, so it was checked every frame instead of in effect never (`triggernodes.cpp`) | `-fno-strict-float-cast-overflow` (native/CMakeLists.txt): clang's saturating conversions, the same single instruction on arm64 |
+
+Not attached to a debugger: attaching one to a Rosetta process wedged Rosetta on the machine it was tried on (every x86-64 program
+hung until a restart). Use a real Intel Mac, or logging (`TWIN_LOWMEM_TRACE=1`). The level sweep takes the app to run
+(`--app`); under Rosetta the game draws fewer frames a second than natively (in the sweep, from about a third as many to as many).
 
 ## Why anti-aliasing is supersampling, not MSAA
 
