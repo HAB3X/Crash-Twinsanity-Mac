@@ -175,6 +175,10 @@ picture at the PS2's resolution, and `replayNNN_gpu.png`, the GPU's at the scale
   16 bit frames; the destination alpha test by a stencil pass when the draw can't change the alpha bit, else in the shader.
 - The PCRTC: the shown buffer's target (both circuits merged on the GPU as the PCRTC merges them) is the picture.
 - Left to the software GS: a frame in a Z format (the game's depth buffer copy into a Z32 frame).
+- Also left to it: a target with no pixels (FBW 0) or a side past 16384 pixels at the scale (`MaxTargetSize`, GL_MAX_TEXTURE_SIZE
+  on Apple silicon): GL can't give it storage, and macOS's GL on Metal aborts a draw into the incomplete framebuffer rather than
+  failing it. Such a target is never drawn into, shown or sampled. (A one-off abort on 7 October, in a dev build's first frames,
+  was Metal refusing a render pass from a draw of `HwGs::Flush`; what made it isn't known: this is the failure mode that fits.)
 - Exactness the shadow volumes (the beach's character shadows) need: vertexes on the rasteriser's sixteenth of a pixel grid
   and a viewport far bigger than the target (no snapping, no clipping: a sliver of a primitive keeps its pixels); wrapping
   additive blends' parts summed as their signed values in 256ths (exact in the half float sums); a 32 bit depth buffer with

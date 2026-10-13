@@ -132,6 +132,8 @@ public:
     static bool RanAway();
     // The same, with the run's instructions checked against its limit first (the translated runs check between programs)
     bool RunawayCheck();
+    // $TWIN_VU_RUNAWAY_DUMP: the first runaway's memory and code written out (vu.cpp)
+    void DumpRunaway();
     // What runs a program instead of the interpreter (VU1's translations, vu1translate.h)
     std::function<void(u32 start)> runner;
     u32 top = 0;

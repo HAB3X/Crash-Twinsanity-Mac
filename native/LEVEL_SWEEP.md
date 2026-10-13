@@ -5,7 +5,7 @@ game started in the chunk by `ui/sweep.cpp`'s `$TWIN_SWEEP_LEVEL`, as the game's
 fatal signals and stray frees recorded. Run: `python native/tools/level_sweep.py OUT --jobs 2` (`--resume` to go on, `--report`
 for this table). The raw results are `native/sweep/results.json`.
 
-**Status: complete, 131 of 131 chunks: 104 play, 23 are entered from a neighbour, 3 end in a game over (the scripted input loses its lives; deaths and restarts work), 1 has a known issue (Rockslide Rumble's opening, below).**
+**Status: complete, 131 of 131 chunks: 105 play, 23 are entered from a neighbour, 3 end in a game over (the scripted input loses its lives; deaths and restarts work).**
 
 - OK: the chunk loads and plays 30 s with no fatal signal.
 - Entered from a neighbour: the chunk has no instance of the played character (a hub's part, a tunnel, a corridor): play started
@@ -16,12 +16,11 @@ for this table). The raw results are `native/sweep/results.json`.
 
 | Level / chunk | What happens | How to reproduce | Log / snapshots | Best guess at the cause |
 | --- | --- | --- | --- | --- |
-| Rockslide Rumble, `Levels\AltEarth\RockSlid\l10start` | Freeze when the opening cutscene starts (state 13, about 8 s in). With the VU safety net it no longer hangs but crawls (every frame stops a runaway VU1 run) | `TWINSANITY_AUDIO=off TWIN_SWEEP_LEVEL='Levels\AltEarth\RockSlid\l10start' "build/native/cmake/Crash Twinsanity.app/Contents/MacOS/Crash Twinsanity" --headless --quiet-stubs --snapshots DIR` | The sweep's `Levels_AltEarth_RockSlid_l10start/log.txt`; "the VU program run at 0 kicked ... packets: stopped" | A VU1 run started at micro address 0 never ends: it goes round the loaded programs (type 0B's, program 21 among them) kicking ~150,000 GIF packets a second; a normal frame's runs kick under 500. The interpreter loops the same way, so it's the data VU1 is given, not the translation. Type 0B's shader functions are the PS2's word for word; the record chain program 21 walks is well formed. Found: the same recursion as the boss area's (a record whose two routine words are the same, native/NATIVE.md, "VU1 runs that never end"): its records at 0x117, 0x11a, 0x17a and 0x17d are dropped now and the scene plays at its pace |
-| Cavern entrance, `Levels\Earth\Cavern\cavent` | Freeze about 20 s into play (frames stop; no fatal signal, no VU safety-net message). Not seen again in the complete sweep and eight more runs | `TWINSANITY_AUDIO=off TWIN_SWEEP_LEVEL='Levels\Earth\Cavern\cavent' ... --headless --quiet-stubs --snapshots DIR` (the sweep's scripted input) | The sweep's `Levels_Earth_Cavern_cavent/`, `frame_0014.png` the last: Crash gone, the death sparkles where he was | Intermittent: a second run played 30 s with no freeze. Crash had died (the scripted input walks him off), so a timing-dependent hang around the death and restart (a race between threads?). The sweep now saves every thread's stack when one freezes (`hang_bt.txt`) |
-| Earth boss area, `Levels\Earth\Hub\bossarea` | Froze during the cutscene with Cortex (state 13; frames stop a few seconds in). Fixed by the VU safety net's instruction limit: the cutscene plays through. Crash looks flat yellow in it (a possible lighting or texture glitch, still open) | `TWIN_SWEEP_LEVEL='Levels\Earth\Hub\bossarea'` as above; `TWIN_VU1=interpret` freezes the same way | The sweep's `Levels_Earth_Hub_bossarea/log.txt`: "the VU1 program run at 0 ran 10 million instructions: stopped" | A VU1 run at micro address 0 that never ends and kicks nothing (so the kick limit missed it): a model's triangle loop (0x16) finds a triangle partly outside the guard band (a vertex behind the camera, w < 0: the camera is almost inside the model) and calls the clipper (0x88), which ends by jumping to the current record's second word; that record (0x17A: 0x2E4, 0x2E4, next 0x17D) sends it back to the model's start (0x2E4), so the same triangle is clipped again forever. The record looks like a model drawn as wholly in view (`QueueInView`, mode 1), whose program has no clipper to go back to. Why it's drawn unclipped (its cell or box test) is still open |
+| Cavern entrance, `Levels\Earth\Cavern\cavent` | Freeze about 20 s into play (frames stop; no fatal signal, no VU safety-net message). Not seen again in the complete sweep and thirteen more runs (below) | `TWINSANITY_AUDIO=off TWIN_SWEEP_LEVEL='Levels\Earth\Cavern\cavent' ... --headless --quiet-stubs --snapshots DIR` (the sweep's scripted input) | The sweep's `Levels_Earth_Cavern_cavent/`, `frame_0014.png` the last: Crash gone, the death sparkles where he was | Intermittent: a second run played 30 s with no freeze. Crash had died (the scripted input walks him off), so a timing-dependent hang around the death and restart (a race between threads?). The sweep now saves every thread's stack when one freezes (`hang_bt.txt`) |
+| Earth boss area, `Levels\Earth\Hub\bossarea` | In the shots of Cortex during the cutscene with him, a flat yellow figure stands at the right, taken for Crash | `TWIN_SWEEP_LEVEL='Levels\Earth\Hub\bossarea' TWIN_SWEEP_STICK=0` as above (walking straight on reaches the scene's trigger in about 10 s) | The run's snapshots | Not Crash, and likely not a bug: it's the Coco disguise Cortex throws off (OGI 0x2DF, a skin of one material, shader type 4 with texture 0x90DF3395, attached to Cortex; not drawing it takes the figure away, while Crash's OGI 0 isn't drawn in those shots at all). It's textured (the ear's red, the flower's pink) and lit with the same chunk lights as Cortex (ambient 0.75, the strongest light 1.5, 1.19, 0); the lights' rows' fourth words (stack leftovers) make no difference. Not compared with the PS2's picture of the scene yet |
 
-The Cavern entrance and Earth boss area freezes did not recur in the complete run (both ran their 30 s); the boss area's is stopped
-by the VU safety net, so its clipper loop is still there. Bugs fixed (NATIVE.md, "Native bugs found by the level sweep"): VU0 programs called with another microcode set loaded (77 of the
+The VU1 runaways in Rockslide Rumble's opening (it crawled: every frame stopped a runaway run) and the Earth boss area's cutscene
+with Cortex (it froze, then needed the safety net) were shader entries read past their data (native/NATIVE.md, "VU1 runs that never end"): both scenes now play at their pace with no runaway. Bugs fixed (NATIVE.md, "Native bugs found by the level sweep"): VU0 programs called with another microcode set loaded (77 of the
 first run's chunks aborted while loading), the texture pack switch's race with the renderer.
 
 | World | Area | Chunk | Status | Load (s) | Frames in 30 s | Notes |
@@ -50,7 +49,7 @@ first run's chunks aborted while loading), the texture pack switch's race with t
 | AltEarth | RockSlid | l10chasb | OK | 6.3 | 181 |  |
 | AltEarth | RockSlid | l10end | OK | 5.2 | 826 |  |
 | AltEarth | RockSlid | l10roids | OK | 4.5 | 827 |  |
-| AltEarth | RockSlid | l10start | no end | 4.8 | - |  |
+| AltEarth | RockSlid | l10start | OK | 5.9 | 553 | the opening cutscene (runaway fixed, run again 2026-10-13) |
 | Earth | Cavern | antfight | OK | 6.0 | 1086 |  |
 | Earth | Cavern | cavallon | Entered from a neighbour | - | - |  |
 | Earth | Cavern | cavbridg | OK | 5.7 | 1076 |  |
@@ -174,4 +173,5 @@ The 30 chunks (the mod's recipes: native/NATIVE.md, "Bug fixes (optional)"), 70 
   labext, labint, ukafight, crgpa08, amberly, roof01, sch_hub: they start from the story's progress or a trigger the scripted
   walk doesn't reach. Not played through.
 
-The Cavern entrance's freeze (above) didn't come in eight further runs of 45 s.
+The Cavern entrance's freeze (above) didn't come in eight further runs of 45 s, nor in five more on 2026-10-13 (45 s each with
+the sweep's freeze watch, 2283 to 2591 frames; only one of the five had Crash die and the level restart, which went through).

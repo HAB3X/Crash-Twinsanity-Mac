@@ -1171,6 +1171,46 @@ bool Vu::RanAway()
     return g_RanAway;
 }
 
+// $TWIN_VU_RUNAWAY_DUMP=FILE: the unit's data memory as the first runaway run left it (finding what it was given), its code
+// (FILE.code), and with the interpreter (TWIN_VU1=interpret) the loop's program counters: each one once, in the order of the last
+// cycle
+void Vu::DumpRunaway()
+{
+    static bool dumped = false;
+    const char* dump = std::getenv("TWIN_VU_RUNAWAY_DUMP");
+    if (dump == nullptr || dumped)
+    {
+        return;
+    }
+
+    dumped = true;
+    std::string text;
+    std::set<u32> seen;
+    for (u32 i = 0; i < 8192; i++)
+    {
+        u32 pc = g_PcRing[(g_PcRingAt + i) & 8191];
+        if (seen.insert(pc).second)
+        {
+            char item[16];
+            std::snprintf(item, sizeof(item), "%x ", pc);
+            text += item;
+        }
+    }
+
+    std::fprintf(stderr, "graphics: the runaway's program counters (oldest first): %s\n", text.c_str());
+    if (FILE* f = std::fopen(dump, "wb"))
+    {
+        std::fwrite(data(), 1, 0x4000, f);
+        std::fclose(f);
+    }
+
+    if (FILE* f = std::fopen((std::string(dump) + ".code").c_str(), "wb"))
+    {
+        std::fwrite(code(), 8, codeSize_, f);
+        std::fclose(f);
+    }
+}
+
 bool Vu::RunawayCheck()
 {
     if (!g_RanAway && index_ == 1 && (runStart == 0 || runStart == 0x0A) && executed >= g_NextRecordCheck)
@@ -1187,6 +1227,7 @@ bool Vu::RunawayCheck()
         else if (executed - g_RecordSince > RecordRunawayInstructions)
         {
             StopRunaway(index_, runStart, "stayed in one record for 600,000 instructions");
+            DumpRunaway();
             g_RanAway = true;
         }
     }
@@ -1194,37 +1235,7 @@ bool Vu::RunawayCheck()
     if (!g_RanAway && executed - g_RunExecuted > RunawayInstructions)
     {
         StopRunaway(index_, runStart, "ran 10 million instructions");
-        // $TWIN_VU_RUNAWAY_DUMP=FILE: the unit's data memory as the runaway run left it (finding what it was given), and with the
-        // interpreter (TWIN_VU1=interpret) the loop's program counters: each one once, in the order of the last cycle
-        if (const char* dump = std::getenv("TWIN_VU_RUNAWAY_DUMP"))
-        {
-            std::string text;
-            std::set<u32> seen;
-            for (u32 i = 0; i < 8192; i++)
-            {
-                u32 pc = g_PcRing[(g_PcRingAt + i) & 8191];
-                if (seen.insert(pc).second)
-                {
-                    char item[16];
-                    std::snprintf(item, sizeof(item), "%x ", pc);
-                    text += item;
-                }
-            }
-
-            std::fprintf(stderr, "graphics: the runaway's program counters (oldest first): %s\n", text.c_str());
-            if (FILE* f = std::fopen(dump, "wb"))
-            {
-                std::fwrite(data(), 1, 0x4000, f);
-                std::fclose(f);
-            }
-
-            if (FILE* f = std::fopen((std::string(dump) + ".code").c_str(), "wb"))
-            {
-                std::fwrite(code(), 8, codeSize_, f);
-                std::fclose(f);
-            }
-        }
-
+        DumpRunaway();
         g_RanAway = true;
     }
 
@@ -1244,9 +1255,10 @@ void Vu::Run(u32 start)
     }
 
     // A run of VU1's record chain (the kernel at 0, which calls each record's routine and goes on to the next) that went away in
-    // one record's routine (a model whose triangle needs the clipper, drawn by a record without a clipping routine: the PS2 would
-    // hang): that record dropped and the chain gone on with from the kernel's step to the next one, so the frame's other records
-    // are drawn. The triangle loop keeps the record it's working on at address 10 (word x)
+    // one record's routine (a record whose clipped-polygon entry is the routine's start sends the clipper back to the model's
+    // start for ever: what the shader entries read past their data did, native/NATIVE.md): that record dropped and the chain
+    // gone on with from the kernel's step to the next one, so the frame's other records are drawn. A backstop: nothing known
+    // reaches it now. The triangle loop keeps the record it's working on at address 10 (word x)
     if (index_ == 1 && start == 0)
     {
         for (u32 dropped = 0; g_RanAway && dropped < 64; dropped++)
