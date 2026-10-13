@@ -1736,8 +1736,24 @@ bool DrawInstead(InstanceContext* instance, GameOGI* ogi, OgiAnimator* animator,
     }
 
     Pack* pack = ChosenPack();
-    if (pack == nullptr || ogi == nullptr || ogi->hasSkin == 0 || ogi->skin == nullptr || g_RenderView == nullptr ||
-        g_RenderTarget == nullptr)
+    if (pack == nullptr || ogi == nullptr || g_RenderView == nullptr || g_RenderTarget == nullptr)
+    {
+        return false;
+    }
+
+    // Crash's own model (skinned) sizes and buckets the pack's character. The spin swaps it for a rigid model of a spinning
+    // Crash (OGI 1, no skin): the pack's character is drawn in its place too, sized by the skinned model, posed by the spin's
+    // animator (its status names the spin's animation slot)
+    static GameOGI* s_Skinned = nullptr;
+    if (ogi->hasSkin != 0 && ogi->skin != nullptr)
+    {
+        s_Skinned = ogi;
+    }
+    else if (s_Skinned != nullptr && animator != nullptr)
+    {
+        ogi = s_Skinned;
+    }
+    else
     {
         return false;
     }
