@@ -1,4 +1,7 @@
 #include "game/animation.h"
+#ifdef TWIN_NATIVE
+#include "characters.h"
+#endif
 
 #include "game/chunkdata.h"
 #include "game/clock.h"
@@ -372,6 +375,15 @@ void ModelNode::Draw(const Matrix4x4* matrix, const Matrix4x4* chunkMatrix, Chun
     if (drawnOgi != nullptr)
     {
         GatherStrongestLights(lights, chunkMatrix, lighting);
+#ifdef TWIN_NATIVE
+        // A character pack chosen: its character in place of the player's model (characters.h)
+        if (NativeCharacters::DrawInstead(owner, drawnOgi, drawnAnimator, matrix, lights, mode))
+        {
+            drawnOgi = nullptr;
+            drawnAnimator = nullptr;
+            return;
+        }
+#endif
         if (drawnAnimator == nullptr)
         {
             DrawOgiRigidModels(drawnOgi, matrix, lights, mode);

@@ -660,9 +660,9 @@ def preview(pack_path, folder, clips_wanted):
         if name not in pack["clips"]:
             continue
         frames = pack["clips"][name]
-        row = []
-        for frame in picks:
-            matrices = frames[min(frame, len(frames) - 1)]
+        every = []
+        for frame in range(len(frames)):
+            matrices = frames[frame]
             colour = np.zeros((height, width, 3)) + (0.25, 0.3, 0.35)
             depth = np.full((height, width), np.inf)
             for material in sorted(pack["materials"], key=lambda m: m["blend"]):
@@ -716,13 +716,18 @@ def preview(pack_path, folder, clips_wanted):
                     else:
                         region[inside] = z[inside]
                     target_pixels[inside] = source[inside]
-            row.append(Image.fromarray((np.clip(colour, 0, 1) * 255).astype(np.uint8)))
+            every.append(Image.fromarray((np.clip(colour, 0, 1) * 255).astype(np.uint8)))
+        row = [every[min(frame, len(every) - 1)] for frame in picks]
         sheet = Image.new("RGB", (width * len(row), height))
         for i, image in enumerate(row):
             sheet.paste(image, (i * width, 0))
         out = folder / ("%s.png" % name.replace("/", "_"))
         sheet.save(out)
         written.append(out)
+        # Every frame as an animated GIF at the clip's 30 frames a second
+        animated = folder / ("%s.gif" % name.replace("/", "_"))
+        every[0].save(animated, save_all=True, append_images=every[1:], duration=33, loop=0)
+        written.append(animated)
     return written
 
 
@@ -808,7 +813,9 @@ def main():
         sum(clip.frames() for _, clip in clips), out / "pack.bin", size / 1e6))
     if arguments.preview:
         wanted = [("b/idle", [0, 6, 12, 18]), ("a/run", [0, 4, 8, 12, 16, 20]), ("b/jump", [0, 5, 10, 15, 20]),
-                  ("a/spin", [0, 2, 4, 6]), ("a/slidattk", [0, 4, 8, 12])]
+                  ("a/spin", [0, 2, 4, 6]), ("a/slidattk", [0, 4, 8, 12]), ("a/sprint", [0, 4, 8]), ("a/walk", [0, 8, 16]),
+                  ("a/bodyslam", [0, 4, 8]), ("a/starjump", [0, 8, 16]), ("a/crawl", [0, 8, 16]), ("b/itch", [0, 20, 40]),
+                  ("e/taunt", [0, 20, 40]), ("b/die", [0, 20, 40])]
         for path in preview(out / "pack.bin", arguments.preview, wanted):
             print("preview:", path)
 
