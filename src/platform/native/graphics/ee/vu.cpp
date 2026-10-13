@@ -1255,9 +1255,10 @@ void Vu::Run(u32 start)
     }
 
     // A run of VU1's record chain (the kernel at 0, which calls each record's routine and goes on to the next) that went away in
-    // one record's routine (a model whose triangle needs the clipper, drawn by a record without a clipping routine: the PS2 would
-    // hang): that record dropped and the chain gone on with from the kernel's step to the next one, so the frame's other records
-    // are drawn. The triangle loop keeps the record it's working on at address 10 (word x)
+    // one record's routine (a record whose clipped-polygon entry is the routine's start sends the clipper back to the model's
+    // start for ever: what the shader entries read past their data did, native/NATIVE.md): that record dropped and the chain
+    // gone on with from the kernel's step to the next one, so the frame's other records are drawn. A backstop: nothing known
+    // reaches it now. The triangle loop keeps the record it's working on at address 10 (word x)
     if (index_ == 1 && start == 0)
     {
         for (u32 dropped = 0; g_RanAway && dropped < 64; dropped++)
