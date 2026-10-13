@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <vector>
 
 // The native build's own UI changes, called from the game's code under TWIN_NATIVE: the PC wording of the language files' console
@@ -214,6 +215,16 @@ enum NativeText : u32
     TextDescLevelSelect,
     TextLevelsFromMainMenu,
     TextDescLevelsFromMainMenu,
+    TextTabCharacters,
+    TextCharacter,
+    TextDescCharacter,
+    TextDescNoPacks,
+    TextMovement,
+    TextDescMovement,
+    TextMovementTwinsanity,
+    TextMovementOriginal,
+    TextPreviewDrag,
+    TextPreviewLevel,
     NativeTextEnd,
 };
 
@@ -328,10 +339,16 @@ enum Option : u32
     OptionMouseLook,
     OptionMouseSensitivity,
     OptionInvertMouseY,
+    // The character pack's movement (characters.h): 0 Twinsanity's (its controllers on the new model), 1 its own game's (not
+    // there yet: Twinsanity's is used)
+    OptionCharacterMovement,
     OptionCount,
 };
 
 s32 GetOption(Option option);
+// The character played (options.txt's "character": a pack's folder under the settings folder's characters/, "" Twinsanity's own)
+std::string CharacterChoice();
+void SetCharacterChoice(const std::string& folder);
 bool IsOn(Option option);
 // Sets an option (kept, and applied at once where it applies at once)
 void SetOption(Option option, s32 value);

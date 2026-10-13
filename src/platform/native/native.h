@@ -26,6 +26,8 @@ std::string PickDiscImage();
 // --snapshots DIR: the shown picture saved as a PNG every 2 seconds (snapshots.cpp), checked once a frame
 void SetSnapshotFolder(const char* folder);
 void SnapshotFrame();
+// How many snapshots were saved so far (the next one's number)
+u32 SnapshotsTaken();
 // --quick: straight to playing the beach (quickstart.cpp), checked once a frame
 void SetQuickStart(bool quick);
 // --level CHUNK: the game started in that chunk (quickstart.cpp)

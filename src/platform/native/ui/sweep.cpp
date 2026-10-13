@@ -169,7 +169,10 @@ void SweepFrame()
         }
 
         g_Frames++;
-        g_Played += std::min(delta, 0.25f);
+        // $TWIN_SWEEP_FRAME_SECONDS: play counted by the game's frames instead of the wall clock (a slowed run, every frame
+        // snapshotted, keeps its scripted input in step with the game)
+        static const char* frameSeconds = std::getenv("TWIN_SWEEP_FRAME_SECONDS");
+        g_Played += frameSeconds != nullptr ? static_cast<f32>(std::atof(frameSeconds)) : std::min(delta, 0.25f);
         // $TWIN_SWEEP_SKIP_AT=SECONDS[, $TWIN_SWEEP_SKIP_EVERY=SECONDS]: a key pressed (as a player's) from that much play on, for a
         // second, and again every so often, nothing held before it: the cutscene's skip, on a clock of the play's own
         static const char* skipAt = std::getenv("TWIN_SWEEP_SKIP_AT");

@@ -26,6 +26,11 @@ void SetChoice(const std::string& name);
 // A pack's name to show (its folder's name made readable when the pack has none)
 std::string DisplayName(const std::string& folder);
 
+// The options' preview (ui/settingsview.cpp): a pack's character drawn on the CPU into RGBA pixels (red the low byte, a clear
+// background) as large as the picture holds, playing its showcase (idle, run, a spin, a taunt) at a time in seconds, turned by
+// yaw degrees. False without the pack
+bool RenderPreview(const std::string& folder, f32 seconds, f32 yaw, u32 width, u32 height, std::vector<u32>& pixels);
+
 // Draws the chosen pack's character for the instance, at its matrix in the world and in its lights, when the instance is the
 // player's Crash: whether it did (the model's own drawing is skipped then)
 bool DrawInstead(InstanceContext* instance, GameOGI* ogi, OgiAnimator* animator, const Matrix4x4* matrix, const ChunkLights* lights,

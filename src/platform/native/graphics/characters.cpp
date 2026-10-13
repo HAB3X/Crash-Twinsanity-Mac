@@ -8,6 +8,7 @@
 #include "characters.h"
 
 #include "native.h"
+#include "ui/nativeui.h"
 #include "renderer/gsregs.h"
 #include "renderer/renderer.h"
 
@@ -23,6 +24,7 @@
 #include "game/view.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <chrono>
 #include <cmath>
@@ -89,6 +91,9 @@ struct PackClip
     u32 frames;
     f32 rate;
     std::vector<Affine> matrices;
+    // How fast the ground goes by under its feet (model units a second; 0 for a clip that doesn't step): two steps a cycle, each
+    // as long as a foot's travel along the model's forward axis
+    f32 stride = 0.0f;
 };
 
 struct Pack
@@ -100,6 +105,8 @@ struct Pack
     std::vector<PackTexture> textures;
     std::vector<PackMaterial> materials;
     std::vector<PackClip> clips;
+    // Each joint's place in the bind pose (model space): the point its skinning matrices turn about
+    std::vector<std::array<f32, 3>> pivots;
     std::map<std::string, u32> clipIndex;
 };
 
@@ -119,6 +126,49 @@ bool Take(const std::vector<u8>& data, size_t& at, T* out, size_t count = 1)
 fs::path CharactersFolder()
 {
     return fs::path(Native::SettingsFolder()) / "characters";
+}
+
+// The feet: the two joints lowest in the bind pose
+void StrideOf(const Pack& pack, PackClip& clip)
+{
+    if (pack.pivots.size() < 2 || clip.frames < 8)
+    {
+        return;
+    }
+
+    u32 feet[2] = {0, 1};
+    for (u32 j = 0; j < pack.pivots.size(); j++)
+    {
+        if (pack.pivots[j][1] < pack.pivots[feet[0]][1])
+        {
+            feet[1] = feet[0];
+            feet[0] = j;
+        }
+        else if (j != feet[0] && pack.pivots[j][1] < pack.pivots[feet[1]][1])
+        {
+            feet[1] = j;
+        }
+    }
+
+    f32 longest = 0.0f;
+    for (u32 foot : feet)
+    {
+        const f32* p = pack.pivots[foot].data();
+        f32 low = 1e9f;
+        f32 high = -1e9f;
+        for (u32 f = 0; f < clip.frames; f++)
+        {
+            const Affine& m = clip.matrices[f * pack.jointCount + foot];
+            f32 z = p[0] * m.m[0][2] + p[1] * m.m[1][2] + p[2] * m.m[2][2] + m.m[3][2];
+            low = std::min(low, z);
+            high = std::max(high, z);
+        }
+
+        longest = std::max(longest, high - low);
+    }
+
+    f32 seconds = static_cast<f32>(clip.frames) / clip.rate;
+    clip.stride = longest > 0.1f ? 2.0f * longest / seconds : 0.0f;
 }
 
 std::unique_ptr<Pack> LoadPack(const std::string& folder)
@@ -150,6 +200,21 @@ std::unique_ptr<Pack> LoadPack(const std::string& folder)
     u32 clipCount = header[4];
     Take(data, at, pack->low, 3);
     Take(data, at, pack->high, 3);
+    for (u32 j = 0; j < pack->jointCount && 64 + (j + 1) * 84 <= data.size(); j++)
+    {
+        // The inverse bind matrix (4 rows of 3, after the name and the parent): the joint's place is where it takes to the
+        // origin, minus its translation turned back (its rotation's inverse is its transpose)
+        f32 m[12];
+        std::memcpy(m, data.data() + 64 + j * 84 + 36, sizeof(m));
+        std::array<f32, 3> place{};
+        for (u32 c = 0; c < 3; c++)
+        {
+            place[c] = -(m[9] * m[c * 3 + 0] + m[10] * m[c * 3 + 1] + m[11] * m[c * 3 + 2]);
+        }
+
+        pack->pivots.push_back(place);
+    }
+
     at = 64 + static_cast<size_t>(pack->jointCount) * 84;
     bool good = at <= data.size();
     for (u32 i = 0; good && i < textureCount; i++)
@@ -224,6 +289,7 @@ std::unique_ptr<Pack> LoadPack(const std::string& folder)
         clip.matrices.resize(static_cast<size_t>(clip.frames) * pack->jointCount);
         good = good && Take(data, at, clip.matrices.data(), clip.matrices.size());
         pack->clipIndex[clip.name] = static_cast<u32>(pack->clips.size());
+        StrideOf(*pack, clip);
         pack->clips.push_back(std::move(clip));
     }
 
@@ -239,13 +305,12 @@ std::unique_ptr<Pack> LoadPack(const std::string& folder)
 }
 
 std::string g_Choice;
-bool g_ChoiceRead = false;
 std::unique_ptr<Pack> g_Pack;
 std::string g_FailedFolder;
 
-Pack* ChosenPack()
+// A pack loaded (one at a time: the one chosen, or the one the options preview)
+Pack* PackFor(const std::string& choice)
 {
-    const std::string& choice = NativeCharacters::Choice();
     if (choice.empty())
     {
         return nullptr;
@@ -268,6 +333,11 @@ Pack* ChosenPack()
     }
 
     return g_Pack.get();
+}
+
+Pack* ChosenPack()
+{
+    return PackFor(NativeCharacters::Choice());
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
@@ -298,6 +368,13 @@ struct Playing
     s32 slot = -2;
     const AnimationStatus* status = nullptr;
     s32 statusTime = 0;
+    s32 began = 0;
+    s32 now = 0;
+    bool clocked = false;
+    // The character's place last frame (the world's units) and its smoothed speed over the ground (the pack's units)
+    f32 place[3] = {};
+    bool hasPlace = false;
+    f32 groundSpeed = 0.0f;
     u32 clip = 0;
     ClipTiming timing = Loop;
     f32 speed = 1.0f;
@@ -393,13 +470,136 @@ u32 ClipNamed(const Pack& pack, const char* name)
     return found != pack.clipIndex.end() ? found->second : 0;
 }
 
-void Lerp(const Affine& a, const Affine& b, f32 share, Affine* out)
+// A skinning matrix as a rotation (a unit quaternion), the scales of its axes and its translation
+struct Parts
 {
-    for (u32 r = 0; r < 4; r++)
+    f32 q[4];
+    f32 scale[3];
+    f32 move[3];
+};
+
+Parts Split(const Affine& a)
+{
+    Parts parts;
+    f32 r[3][3];
+    for (u32 row = 0; row < 3; row++)
+    {
+        f32 length = std::sqrt(a.m[row][0] * a.m[row][0] + a.m[row][1] * a.m[row][1] + a.m[row][2] * a.m[row][2]);
+        parts.scale[row] = length;
+        for (u32 c = 0; c < 3; c++)
+        {
+            r[row][c] = length > 1e-8f ? a.m[row][c] / length : (row == c ? 1.0f : 0.0f);
+        }
+
+        parts.move[row] = a.m[3][row];
+    }
+
+    // The rotation's quaternion (row vectors: r is the transpose of the column form)
+    f32 trace = r[0][0] + r[1][1] + r[2][2];
+    f32* q = parts.q;
+    if (trace > 0.0f)
+    {
+        f32 k = 0.5f / std::sqrt(trace + 1.0f);
+        q[3] = 0.25f / k;
+        q[0] = (r[1][2] - r[2][1]) * k;
+        q[1] = (r[2][0] - r[0][2]) * k;
+        q[2] = (r[0][1] - r[1][0]) * k;
+    }
+    else if (r[0][0] > r[1][1] && r[0][0] > r[2][2])
+    {
+        f32 k = 2.0f * std::sqrt(1.0f + r[0][0] - r[1][1] - r[2][2]);
+        q[3] = (r[1][2] - r[2][1]) / k;
+        q[0] = 0.25f * k;
+        q[1] = (r[1][0] + r[0][1]) / k;
+        q[2] = (r[2][0] + r[0][2]) / k;
+    }
+    else if (r[1][1] > r[2][2])
+    {
+        f32 k = 2.0f * std::sqrt(1.0f + r[1][1] - r[0][0] - r[2][2]);
+        q[3] = (r[2][0] - r[0][2]) / k;
+        q[0] = (r[1][0] + r[0][1]) / k;
+        q[1] = 0.25f * k;
+        q[2] = (r[2][1] + r[1][2]) / k;
+    }
+    else
+    {
+        f32 k = 2.0f * std::sqrt(1.0f + r[2][2] - r[0][0] - r[1][1]);
+        q[3] = (r[0][1] - r[1][0]) / k;
+        q[0] = (r[2][0] + r[0][2]) / k;
+        q[1] = (r[2][1] + r[1][2]) / k;
+        q[2] = 0.25f * k;
+    }
+
+    return parts;
+}
+
+Affine Join(const Parts& parts)
+{
+    const f32* q = parts.q;
+    f32 x = q[0], y = q[1], z = q[2], w = q[3];
+    f32 r[3][3] = {{1 - 2 * (y * y + z * z), 2 * (x * y + z * w), 2 * (x * z - y * w)},
+                   {2 * (x * y - z * w), 1 - 2 * (x * x + z * z), 2 * (y * z + x * w)},
+                   {2 * (x * z + y * w), 2 * (y * z - x * w), 1 - 2 * (x * x + y * y)}};
+    Affine a;
+    for (u32 row = 0; row < 3; row++)
     {
         for (u32 c = 0; c < 3; c++)
         {
-            out->m[r][c] = a.m[r][c] + (b.m[r][c] - a.m[r][c]) * share;
+            a.m[row][c] = r[row][c] * parts.scale[row];
+        }
+
+        a.m[3][row] = parts.move[row];
+    }
+
+    return a;
+}
+
+// Between two skinning matrices: their rotations the shorter way round (normalised), their scales and translations straight.
+// A straight blend of the matrices shrinks the model where joints turn fast (a somersault's half a turn in a frame or two)
+void Lerp(const Affine& a, const Affine& b, f32 share, Affine* out, const f32* pivot = nullptr)
+{
+    Parts from = Split(a);
+    Parts to = Split(b);
+    // About the joint's own place: where it is moves straight, so a joint turning fast keeps its place in the chain
+    f32 at[2][3] = {};
+    if (pivot != nullptr)
+    {
+        for (u32 c = 0; c < 3; c++)
+        {
+            at[0][c] = pivot[0] * a.m[0][c] + pivot[1] * a.m[1][c] + pivot[2] * a.m[2][c] + a.m[3][c];
+            at[1][c] = pivot[0] * b.m[0][c] + pivot[1] * b.m[1][c] + pivot[2] * b.m[2][c] + b.m[3][c];
+        }
+    }
+
+    f32 dot = from.q[0] * to.q[0] + from.q[1] * to.q[1] + from.q[2] * to.q[2] + from.q[3] * to.q[3];
+    f32 sign = dot < 0.0f ? -1.0f : 1.0f;
+    Parts mixed;
+    f32 length = 0.0f;
+    for (u32 k = 0; k < 4; k++)
+    {
+        mixed.q[k] = from.q[k] + (to.q[k] * sign - from.q[k]) * share;
+        length += mixed.q[k] * mixed.q[k];
+    }
+
+    length = std::sqrt(length);
+    for (u32 k = 0; k < 4; k++)
+    {
+        mixed.q[k] = length > 1e-8f ? mixed.q[k] / length : (k == 3 ? 1.0f : 0.0f);
+    }
+
+    for (u32 k = 0; k < 3; k++)
+    {
+        mixed.scale[k] = from.scale[k] + (to.scale[k] - from.scale[k]) * share;
+        mixed.move[k] = from.move[k] + (to.move[k] - from.move[k]) * share;
+    }
+
+    *out = Join(mixed);
+    if (pivot != nullptr)
+    {
+        for (u32 c = 0; c < 3; c++)
+        {
+            f32 turned = pivot[0] * out->m[0][c] + pivot[1] * out->m[1][c] + pivot[2] * out->m[2][c];
+            out->m[3][c] = at[0][c] + (at[1][c] - at[0][c]) * share - turned;
         }
     }
 }
@@ -427,7 +627,8 @@ void ClipPose(const Pack& pack, const PackClip& clip, f32 time, bool loops, std:
     out.resize(pack.jointCount);
     for (u32 j = 0; j < pack.jointCount; j++)
     {
-        Lerp(clip.matrices[first * pack.jointCount + j], clip.matrices[second * pack.jointCount + j], share, &out[j]);
+        Lerp(clip.matrices[first * pack.jointCount + j], clip.matrices[second * pack.jointCount + j], share, &out[j],
+             j < pack.pivots.size() ? pack.pivots[j].data() : nullptr);
     }
 }
 
@@ -440,7 +641,7 @@ void Trace(const AnimationStatus* status, s32 slot, const GameAnimation* animati
     {
         static const auto start = std::chrono::steady_clock::now();
         f32 seconds = std::chrono::duration<f32>(std::chrono::steady_clock::now() - start).count();
-        Native::Log("characters: %.2f s, frame %u: Twinsanity slot %d (animation %u, %.2f s%s) shown as %s", seconds, g_RenderedFrames, slot,
+        Native::Log("characters: %.2f s, frame %u, snapshot %u: Twinsanity slot %d (animation %u, %.2f s%s) shown as %s", seconds, g_RenderedFrames, Native::SnapshotsTaken(), slot,
                     animation != nullptr ? animation->id : 0,
                     status != nullptr ? static_cast<f32>(status->length) / g_ClockUnitsPerSecond : 0.0f,
                     status != nullptr && status->bits.loops ? ", looped" : "", clip);
@@ -448,21 +649,35 @@ void Trace(const AnimationStatus* status, s32 slot, const GameAnimation* animati
 }
 
 // The pose this frame: the clip for Twinsanity's animation, moved on by the game's time (nothing moves while it's paused)
-const std::vector<Affine>& PoseFor(const Pack& pack, const InstanceContext* instance, const OgiAnimator* animator)
+// The pose this frame. groundSpeed: how fast the character goes over the ground in the pack's units a second (a stepping clip
+// plays at the pace its feet keep up with it, within a third and three times its own)
+const std::vector<Affine>& PoseFor(const Pack& pack, const InstanceContext* instance, const OgiAnimator* animator,
+                                   const f32* place, f32 scale)
 {
     Playing& playing = g_Playing;
     const AnimationStatus* status = NewestStatus(animator);
     const GameAnimation* animation = AnimationOf(status);
     s32 slot = SlotOf(instance, animation);
+    // The character's clock now (a started status's start plus its time into it: the same for all of the character's
+    // statuses, a loop's wrap moving both), its advance since the last frame the time the clip moves on by. Twinsanity may
+    // start a new status for the same animation, so statuses aren't followed one by one
     f32 elapsed = 0.0f;
-    if (status != nullptr && status == playing.status && status->time > playing.statusTime)
+    bool clocked = status != nullptr && status->bits.started != 0;
+    s32 now = clocked ? status->began + status->time : playing.now;
+    if (clocked && playing.clocked && now > playing.now)
     {
-        elapsed = static_cast<f32>(status->time - playing.statusTime) / g_ClockUnitsPerSecond;
+        elapsed = std::min(static_cast<f32>(now - playing.now) / g_ClockUnitsPerSecond, 0.25f);
     }
 
-    bool fresh = slot != playing.slot || (status != playing.status && status != nullptr && status->time < playing.statusTime);
+    // A new slot, or the same one started again (a second jump) unless it loops
+    bool restarted = status != nullptr && clocked && status->began != playing.began && status->time < playing.statusTime &&
+                     MappingOf(slot)->timing != Loop;
+    bool fresh = slot != playing.slot || restarted;
     playing.status = status;
     playing.statusTime = status != nullptr ? status->time : 0;
+    playing.began = status != nullptr ? status->began : 0;
+    playing.clocked = clocked || playing.clocked;
+    playing.now = now;
     if (fresh)
     {
         const SlotClip* mapping = MappingOf(slot);
@@ -494,16 +709,44 @@ const std::vector<Affine>& PoseFor(const Pack& pack, const InstanceContext* inst
     }
     else
     {
-        playing.time += elapsed * clip.rate * playing.speed;
+        f32 pace = playing.speed;
+        if (playing.timing == Loop && clip.stride > 0.0f)
+        {
+            if (elapsed > 0.0f && playing.hasPlace)
+            {
+                f32 dx = place[0] - playing.place[0];
+                f32 dz = place[2] - playing.place[2];
+                f32 speed = std::sqrt(dx * dx + dz * dz) / elapsed / std::max(scale, 1e-3f);
+                // Smoothed: a frame's step is uneven
+                playing.groundSpeed += (speed - playing.groundSpeed) * std::min(1.0f, elapsed * 8.0f);
+            }
+
+            pace = std::clamp(playing.groundSpeed / clip.stride, 0.33f, 2.5f) * playing.speed;
+            static const bool tracing = std::getenv("TWIN_CHARACTER_TRACE") != nullptr;
+            if (tracing && g_RenderedFrames % 30 == 0)
+            {
+                Native::Log("characters: %s: ground %.2f, its stride %.2f a second, pace %.2f", clip.name.c_str(),
+                            playing.groundSpeed, clip.stride, pace);
+            }
+        }
+
+        playing.time += elapsed * clip.rate * pace;
     }
 
+    for (u32 k = 0; k < 3; k++)
+    {
+        playing.place[k] = place[k];
+    }
+
+    playing.hasPlace = true;
     ClipPose(pack, clip, playing.time, playing.timing == Loop, playing.pose);
     if (playing.blend < 1.0f && playing.from.size() == playing.pose.size())
     {
         playing.blend = std::min(1.0f, playing.blend + elapsed / BlendSeconds);
         for (u32 j = 0; j < pack.jointCount; j++)
         {
-            Lerp(playing.from[j], playing.pose[j], playing.blend, &playing.pose[j]);
+            Lerp(playing.from[j], playing.pose[j], playing.blend, &playing.pose[j],
+                 j < pack.pivots.size() ? pack.pivots[j].data() : nullptr);
         }
     }
 
@@ -719,6 +962,21 @@ struct Placement
 
 f32 g_TurnDegrees = 180.0f;
 
+// The pack's size made the Twinsanity character's (its model's height; $TWIN_CHARACTER_SCALE sets it)
+f32 ScaleOf(const Pack& pack, const GameOGI* ogi)
+{
+    f32 packHeight = pack.high[1] - pack.low[1];
+    f32 height = ogi != nullptr ? ogi->bounds.max.y - ogi->bounds.min.y : 0.0f;
+    f32 scale = packHeight > 0.0f && height > 0.0f ? height / packHeight : 1.0f;
+    static const char* scaleSetting = std::getenv("TWIN_CHARACTER_SCALE");
+    if (scaleSetting != nullptr)
+    {
+        scale = static_cast<f32>(std::atof(scaleSetting));
+    }
+
+    return scale;
+}
+
 // The pack's model space (WoC's: Y up, facing -Z, Crash about 1 tall) into the instance's: turned about Y, scaled to the
 // Twinsanity character's height
 Placement Place(const Pack& pack, const GameOGI* ogi, const Matrix4x4* matrix)
@@ -729,14 +987,7 @@ Placement Place(const Pack& pack, const GameOGI* ogi, const Matrix4x4* matrix)
         g_TurnDegrees = static_cast<f32>(std::atof(turn));
     }
 
-    f32 packHeight = pack.high[1] - pack.low[1];
-    f32 height = ogi != nullptr ? ogi->bounds.max.y - ogi->bounds.min.y : 0.0f;
-    f32 scale = packHeight > 0.0f && height > 0.0f ? height / packHeight : 1.0f;
-    static const char* scaleSetting = std::getenv("TWIN_CHARACTER_SCALE");
-    if (scaleSetting != nullptr)
-    {
-        scale = static_cast<f32>(std::atof(scaleSetting));
-    }
+    f32 scale = ScaleOf(pack, ogi);
 
     f32 radians = (g_TurnDegrees + g_Playing.yaw) * 3.14159265f / 180.0f;
     f32 c = std::cos(radians) * scale;
@@ -850,7 +1101,7 @@ u32 g_DrawnFrame = ~0u;
 void DrawPack(Pack& pack, const InstanceContext* instance, const GameOGI* ogi, const OgiAnimator* animator,
               const Matrix4x4* matrix, const ChunkLights* lights, u32 bucketIndex)
 {
-    const std::vector<Affine>& pose = PoseFor(pack, instance, animator);
+    const std::vector<Affine>& pose = PoseFor(pack, instance, animator, &matrix->m[3][0], ScaleOf(pack, ogi));
     Placement placement = Place(pack, ogi, matrix);
     Matrix4x4 toClip = g_RenderView->toClip;
     const Matrix4x4& toScreen = g_RenderTarget->clipToScreen;
@@ -1029,13 +1280,14 @@ std::vector<std::string> Installed()
 
 const std::string& Choice()
 {
-    if (!g_ChoiceRead)
+    // $TWIN_CHARACTER (tests) over the option
+    if (const char* setting = std::getenv("TWIN_CHARACTER"))
     {
-        g_ChoiceRead = true;
-        if (const char* setting = std::getenv("TWIN_CHARACTER"))
-        {
-            g_Choice = setting;
-        }
+        g_Choice = setting;
+    }
+    else
+    {
+        g_Choice = NativeUi::CharacterChoice();
     }
 
     return g_Choice;
@@ -1043,11 +1295,7 @@ const std::string& Choice()
 
 void SetChoice(const std::string& name)
 {
-    Choice();
-    if (std::getenv("TWIN_CHARACTER") == nullptr)
-    {
-        g_Choice = name;
-    }
+    NativeUi::SetCharacterChoice(name);
 }
 
 std::string DisplayName(const std::string& folder)
