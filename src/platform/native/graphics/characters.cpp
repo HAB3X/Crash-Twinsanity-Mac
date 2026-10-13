@@ -71,6 +71,10 @@ struct PackMaterial
 
 // A pack's texture as the GS takes it: 32 bit pixels (alpha 0x80 opaque) in an IMAGE transfer, and a Texture of the renderer's
 // for its slot (only the slot, its width and its size powers are used)
+constexpr u32 MostTextureSide = 512;
+// A ring slot's size (renderer/textures.cpp's 64 KB slots); a texture past it takes the large slot
+constexpr size_t SlotBytes = 0x10000;
+
 struct PackTexture
 {
     u32 width;
@@ -225,8 +229,10 @@ std::unique_ptr<Pack> LoadPack(const std::string& folder)
         texture.width = size[0];
         texture.height = size[1];
         size_t bytes = static_cast<size_t>(texture.width) * texture.height * 4;
+        // Powers of two from 8 to 512 a side: up to 64 KB in one of the renderer's ring slots of GS memory, bigger ones (up to 1 MB,
+        // 512 x 512) in its large textures' slot (1.25 MB)
         good = good && at + bytes <= data.size() && std::has_single_bit(texture.width) && std::has_single_bit(texture.height) &&
-               bytes <= 0x10000;
+               texture.width >= 8 && texture.height >= 8 && texture.width <= MostTextureSide && texture.height <= MostTextureSide;
         if (!good)
         {
             break;
@@ -458,15 +464,24 @@ const SlotClip* MappingOf(s32 slot)
     return &g_DefaultClip;
 }
 
-u32 ClipNamed(const Pack& pack, const char* name)
+// The first of a mapping's clips ("a|b": b when the pack has no a) the pack has, else the default's, else its first
+u32 ClipNamed(const Pack& pack, const char* names)
 {
-    auto found = pack.clipIndex.find(name);
-    if (found != pack.clipIndex.end())
+    std::string list = names;
+    for (size_t at = 0; at <= list.size();)
     {
-        return found->second;
+        size_t end = list.find('|', at);
+        end = end == std::string::npos ? list.size() : end;
+        auto found = pack.clipIndex.find(list.substr(at, end - at));
+        if (found != pack.clipIndex.end())
+        {
+            return found->second;
+        }
+
+        at = end + 1;
     }
 
-    found = pack.clipIndex.find(g_DefaultClip.clip);
+    auto found = pack.clipIndex.find(g_DefaultClip.clip);
     return found != pack.clipIndex.end() ? found->second : 0;
 }
 
@@ -905,9 +920,25 @@ void UploadPixels(ChainWriter& writer, const PackTexture& texture, u32 gsAddress
     writer.Register(0, GsTrxPos);
     writer.Register(static_cast<u64>(texture.width) | static_cast<u64>(texture.height) << 32, GsTrxReg);
     writer.Register(0, GsTrxDir);
-    writer.Write64(ImageDataTag(static_cast<u32>(texture.pixels.size())), 0);
-    writer.chain.insert(writer.chain.end(), texture.pixels.begin(), texture.pixels.end());
     writer.Close(tag);
+    // The pixels where they are (REFs, not copied into the chain), in IMAGE packets the GIF's tag can count (the path keeps its
+    // place between VIF1's DIRECTs)
+    constexpr size_t Chunk = 0x4000;
+    for (size_t at = 0; at < texture.pixels.size(); at += Chunk)
+    {
+        u32 quadwords = static_cast<u32>(std::min(Chunk, texture.pixels.size() - at));
+        Quad& image = writer.Add();
+        image.w[0] = CountTag | 1;
+        image.w[1] = 0;
+        image.w[2] = 0;
+        image.w[3] = VifDirect | 1;
+        writer.Write64(ImageDataTag(quadwords), 0);
+        Quad& reference = writer.Add();
+        reference.w[0] = ReferenceTag | quadwords;
+        reference.w[1] = Address(&texture.pixels[at]);
+        reference.w[2] = 0;
+        reference.w[3] = VifDirect | quadwords;
+    }
 }
 
 void MaterialRegisters(ChainWriter& writer, const PackMaterial& material, const PackTexture* texture, u32 gsAddress)
@@ -1140,7 +1171,8 @@ void DrawPack(Pack& pack, const InstanceContext* instance, const GameOGI* ogi, c
             if (texture != nullptr)
             {
                 bool upload = false;
-                TextureSlot* slot = ClaimTextureSlot(texture->slotOwner.get(), bucketIndex, &upload);
+                bool large = texture->pixels.size() * sizeof(Quad) > SlotBytes;
+                TextureSlot* slot = ClaimTextureSlot(texture->slotOwner.get(), bucketIndex, large, &upload);
                 if (slot == nullptr)
                 {
                     continue;

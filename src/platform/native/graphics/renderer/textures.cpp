@@ -216,7 +216,7 @@ extern "C"
         return WriteTextureUpload(context, packet, texture, slot);
     }
 
-    TextureSlot* ClaimTextureSlot(Texture* texture, u32 bucket, bool* upload)
+    TextureSlot* ClaimTextureSlot(Texture* texture, u32 bucket, bool large, bool* upload)
     {
         // UploadTexture's choice, with the upload left to the caller
         u32 bit = 1u << (bucket & ShiftMask);
@@ -230,7 +230,7 @@ extern "C"
             return slot;
         }
 
-        if (texture->levelWidths[0] >= LargeTextureWidth)
+        if (large || texture->levelWidths[0] >= LargeTextureWidth)
         {
             slot = &g_LargeTextureSlot;
             if (slot->owner != nullptr)
