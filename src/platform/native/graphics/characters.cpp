@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -287,6 +288,7 @@ struct SlotClip
     const char* clip;
     ClipTiming timing;
     f32 speed;
+    f32 turns;
 };
 
 #include "characters_mapping.inc"
@@ -299,7 +301,10 @@ struct Playing
     u32 clip = 0;
     ClipTiming timing = Loop;
     f32 speed = 1.0f;
+    f32 turns = 0.0f;
     f32 time = 0.0f;
+    // The turn about the up axis this frame (degrees)
+    f32 yaw = 0.0f;
     // The pose blended from as a new clip starts, and how far in (1: done)
     std::vector<Affine> from;
     f32 blend = 1.0f;
@@ -426,12 +431,19 @@ void ClipPose(const Pack& pack, const PackClip& clip, f32 time, bool loops, std:
     }
 }
 
-void Trace(const char* format, s32 slot, u32 id, const char* clip)
+// $TWIN_CHARACTER_TRACE: each change of Twinsanity's animation logged (the frame, the slot, its animation's ID, length in
+// seconds and whether it loops, the clip shown)
+void Trace(const AnimationStatus* status, s32 slot, const GameAnimation* animation, const char* clip)
 {
     static const bool tracing = std::getenv("TWIN_CHARACTER_TRACE") != nullptr;
     if (tracing)
     {
-        Native::Log(format, slot, id, clip);
+        static const auto start = std::chrono::steady_clock::now();
+        f32 seconds = std::chrono::duration<f32>(std::chrono::steady_clock::now() - start).count();
+        Native::Log("characters: %.2f s, frame %u: Twinsanity slot %d (animation %u, %.2f s%s) shown as %s", seconds, g_RenderedFrames, slot,
+                    animation != nullptr ? animation->id : 0,
+                    status != nullptr ? static_cast<f32>(status->length) / g_ClockUnitsPerSecond : 0.0f,
+                    status != nullptr && status->bits.loops ? ", looped" : "", clip);
     }
 }
 
@@ -455,16 +467,16 @@ const std::vector<Affine>& PoseFor(const Pack& pack, const InstanceContext* inst
     {
         const SlotClip* mapping = MappingOf(slot);
         u32 clip = ClipNamed(pack, mapping->clip);
-        Trace("characters: Twinsanity slot %d (animation %u) shown as %s", slot, animation != nullptr ? animation->id : 0,
-              pack.clips[clip].name.c_str());
-        // A looped clip going on in the same clip keeps its place
-        bool continues = clip == playing.clip && mapping->timing == Loop && playing.timing == Loop;
+        Trace(status, slot, animation, pack.clips[clip].name.c_str());
+        // The same clip going on (a loop, or the slide's two slots) keeps its place
+        bool continues = clip == playing.clip && mapping->timing != Fit && playing.timing == mapping->timing;
         playing.from = playing.pose;
         playing.blend = playing.from.empty() ? 1.0f : 0.0f;
         playing.slot = slot;
         playing.clip = clip;
         playing.timing = mapping->timing;
         playing.speed = mapping->speed;
+        playing.turns = mapping->turns;
         if (!continues)
         {
             playing.time = 0.0f;
@@ -472,10 +484,13 @@ const std::vector<Affine>& PoseFor(const Pack& pack, const InstanceContext* inst
     }
 
     const PackClip& clip = pack.clips[playing.clip];
-    if (playing.timing == Fit && status != nullptr && status->length > 0)
+    f32 share = status != nullptr && status->length > 0
+                    ? std::clamp(static_cast<f32>(status->time) / static_cast<f32>(status->length), 0.0f, 1.0f)
+                    : 0.0f;
+    playing.yaw = playing.turns * 360.0f * share;
+    if (playing.timing == Fit)
     {
-        f32 share = static_cast<f32>(status->time) / static_cast<f32>(status->length);
-        playing.time = std::clamp(share, 0.0f, 1.0f) * static_cast<f32>(clip.frames - 1);
+        playing.time = share * static_cast<f32>(clip.frames - 1);
     }
     else
     {
@@ -723,7 +738,7 @@ Placement Place(const Pack& pack, const GameOGI* ogi, const Matrix4x4* matrix)
         scale = static_cast<f32>(std::atof(scaleSetting));
     }
 
-    f32 radians = g_TurnDegrees * 3.14159265f / 180.0f;
+    f32 radians = (g_TurnDegrees + g_Playing.yaw) * 3.14159265f / 180.0f;
     f32 c = std::cos(radians) * scale;
     f32 s = std::sin(radians) * scale;
     Matrix4x4 turnScale = {};
