@@ -5,6 +5,7 @@
 // keycaps (or the pad's buttons) at the bottom. Its parts are recorded as hit regions for the mouse. The game's menus' bar of
 // prompts and the cursor are drawn here too
 #include "ui/settingsmodel.h"
+#include "characters.h"
 #include "ui/overlay.h"
 
 #include "native.h"
@@ -463,11 +464,19 @@ struct RowColours
 
 // A value between chevrons (common.css's .v: centred in its 280px on the row's right)
 void ChoiceValue(OverlayFrame& frame, const std::string& value, f32 centre, f32 middle, const RowColours& colours, s32 index,
-                 f32 top, std::vector<HitRegion>& regions)
+                 f32 top, std::vector<HitRegion>& regions, f32 room = 1e9f)
 {
     TextStyle text = Body(21.0f, colours.pillText);
     TextStyle chevron = Body(21.0f, colours.chevron, true);
     f32 textWidth = OverlayTextWidth(value, text);
+    // A long value made smaller to fit its room (the chevrons and the pill's ends beside it)
+    f32 fits = room - 36.0f - 2.0f * (OverlayTextWidth("\x8B", chevron) + ChevronGap);
+    if (textWidth > fits && fits > 0.0f)
+    {
+        text.size *= fits / textWidth;
+        textWidth = fits;
+    }
+
     f32 pillWidth = textWidth + 36.0f;
     f32 pillHeight = OverlayLineHeight(text) + 8.0f;
     std::string left = "\x8B";
@@ -529,6 +538,99 @@ constexpr f32 CellWidth = 132.0f;
 }
 
 // ---------------------------------------------------------------------------------------------------------------- the screen
+// The Characters tab's layout: the rows' width and their values' (the panel's left), the preview's box (its right)
+constexpr f32 CharacterRowsWidth = 470.0f;
+constexpr f32 CharacterValueWidth = 280.0f;
+constexpr f32 PreviewX = PanelX + PanelPadX + CharacterRowsWidth + 16.0f;
+constexpr f32 PreviewY = PanelY + PanelPadY;
+constexpr f32 PreviewWidth = PanelX + PanelWidth - PanelPadX - PreviewX;
+constexpr f32 PreviewHeight = PanelHeight - PanelPadY * 2.0f;
+// The preview's pixels a reference pixel (sharp at 1.5x the reference size; a 2560 x 1440 window is 2x)
+constexpr f32 PreviewDensity = 1.5f;
+
+// The pack's game, shown under its name
+std::string CharacterSource(const std::string& folder)
+{
+    if (folder.empty())
+    {
+        return "Crash Twinsanity";
+    }
+
+    if (folder.rfind("woc_", 0) == 0)
+    {
+        return "Crash Bandicoot: The Wrath of Cortex";
+    }
+
+    if (folder.rfind("cttr_", 0) == 0)
+    {
+        return "Crash Tag Team Racing";
+    }
+
+    return "";
+}
+
+// The selected character drawn large on a deep blue stage (characters.h's preview, turned by the mouse or slowly by itself),
+// its name and game under the rows
+void CharacterPreview(OverlayFrame& frame, std::vector<HitRegion>& regions, f32 fade, f32 now)
+{
+    static f32 last = now;
+    f32 delta = std::clamp(now - last, 0.0f, 0.1f);
+    last = now;
+    std::string character = SettingsCharacter();
+    f32 yaw = SettingsPreviewYaw(delta);
+
+    BoxStyle stage;
+    stage.fill = Faded(Hex(0x2a86e6), fade);
+    stage.fillBottom = Faded(Hex(0x0a3b7a), fade);
+    stage.radius = 18.0f;
+    stage.border = 2.0f;
+    stage.borderColour = Faded(Hex(0xffffff, 0.35f), fade);
+    frame.Box(PreviewX, PreviewY, PreviewWidth, PreviewHeight, stage);
+    // A soft light behind the character
+    BoxStyle glow;
+    glow.fill = Faded(Hex(0xffffff, 0.10f), fade);
+    glow.radius = PreviewWidth * 0.4f;
+    frame.Box(PreviewX + PreviewWidth * 0.12f, PreviewY + PreviewHeight * 0.1f, PreviewWidth * 0.76f, PreviewHeight * 0.66f, glow);
+
+    static std::vector<u32> pixels;
+    u32 width = static_cast<u32>(PreviewWidth * PreviewDensity);
+    u32 height = static_cast<u32>(PreviewHeight * PreviewDensity);
+    if (NativeCharacters::RenderPreview(character, now, yaw, width, height, pixels))
+    {
+        SetOverlayPreview(pixels, static_cast<s32>(width), static_cast<s32>(height));
+        frame.Image(OverlayImage::CharacterPreview, PreviewX, PreviewY, PreviewWidth, PreviewHeight, fade);
+        TextStyle hint = Body(15.0f, Faded(Hex(0xd6e8ff), fade));
+        frame.Text(Sentence(Text(TextPreviewDrag)), PreviewX + PreviewWidth - 14.0f, PreviewY + 20.0f, hint, OverlayAlign::Right);
+    }
+    else
+    {
+        // Twinsanity's own Crash is the game's model, drawn in its levels
+        TextStyle note = Body(19.0f, Faded(Hex(0xd6e8ff), fade));
+        frame.Text(Sentence(Text(TextPreviewLevel)), PreviewX + PreviewWidth * 0.5f, PreviewY + PreviewHeight * 0.5f, note,
+                   OverlayAlign::Centre);
+    }
+
+    regions.push_back({HitKind::Preview, PreviewX, PreviewY, PreviewWidth, PreviewHeight, -1, -1, -1});
+
+    // The character's name and game under the rows
+    std::string name = Capitals(NativeCharacters::DisplayName(character));
+    TextStyle title = Display(30.0f, Faded(Orange, fade));
+    constexpr f32 TitleRoom = CharacterRowsWidth - RowPad * 2.0f;
+    f32 titleWidth = OverlayTextWidth(name, title);
+    if (titleWidth > TitleRoom)
+    {
+        title.size *= TitleRoom / titleWidth;
+    }
+
+    title.outline = 1.2f;
+    title.outlineColour = Faded(Brown, fade);
+    f32 left = PanelX + PanelPadX + RowPad;
+    f32 bottom = PanelY + PanelHeight - PanelPadY;
+    frame.Text(name, left, bottom - 66.0f, title);
+    TextStyle source = Body(17.0f, Faded(Hex(0x6b86a8), fade), true);
+    frame.Text(CharacterSource(character), left, bottom - 32.0f, source);
+}
+
 void DrawSettingsView(OverlayFrame& frame, std::vector<HitRegion>& regions)
 {
     SettingsView view = CurrentSettingsView();
@@ -653,7 +755,14 @@ void DrawSettingsView(OverlayFrame& frame, std::vector<HitRegion>& regions)
     frame.Clip(PanelX, rowsTop, PanelWidth, rowsHeight);
     f32 rowLeft = PanelX + PanelPadX;
     f32 rowWidth = PanelWidth - PanelPadX * 2.0f;
-    f32 valueCentre = rowLeft + rowWidth - RowPad - ValueWidth * 0.5f;
+    // The Characters tab: the rows on the left, the preview on the right
+    bool characters = view.page == TabCharacters;
+    if (characters)
+    {
+        rowWidth = CharacterRowsWidth;
+    }
+
+    f32 valueCentre = rowLeft + rowWidth - RowPad - (characters ? CharacterValueWidth : ValueWidth) * 0.5f;
 
     // The selection bar sliding to its row (in the rows' own space: the scroll moves it with the rows)
     f32 targetY = selectedTop;
@@ -721,7 +830,8 @@ void DrawSettingsView(OverlayFrame& frame, std::vector<HitRegion>& regions)
         case RowChoice:
         {
             std::string value = Sentence(Dimensions(row.valueText(row.get())));
-            ChoiceValue(frame, value, valueCentre, middle, colours, index, top, regions);
+            ChoiceValue(frame, value, valueCentre, middle, colours, index, top, regions,
+                        characters ? CharacterValueWidth : 1e9f);
             break;
         }
         case RowSlider:
@@ -814,6 +924,10 @@ void DrawSettingsView(OverlayFrame& frame, std::vector<HitRegion>& regions)
     }
 
     frame.NoClip();
+    if (characters)
+    {
+        CharacterPreview(frame, regions, fade, now);
+    }
 
     // The scrollbar: thin and orange, when the rows overflow
     if (maxScroll > 0.0f)

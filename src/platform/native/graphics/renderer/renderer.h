@@ -1110,7 +1110,8 @@ extern "C"
     u8* WriteTextureUpload(void* context, u8* packet, Texture* texture, TextureSlot* slot) RETAIL(SetTextureDma_);
     // Native: a texture of the port's own (a character pack's, graphics/characters.cpp) given a slot the way UploadTexture gives a
     // game texture one; upload is set when its pixels have to be sent (new to the slot or to the bucket). nullptr: no slot free
-    TextureSlot* ClaimTextureSlot(Texture* texture, u32 bucket, bool* upload);
+    // large: the large textures' slot whatever its width (a texture over a ring slot's 64 KB)
+    TextureSlot* ClaimTextureSlot(Texture* texture, u32 bucket, bool large, bool* upload);
     // Every slot let go of (and the uses counted from 0 but when keepTime), one slot, the large textures', and the first slot
     // (its address returned: a buffer of GS memory to draw into)
     void FreeTextureSlots(void* context, u32 keepTime) RETAIL(FUN_001c0f08);

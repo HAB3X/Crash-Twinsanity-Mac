@@ -8,6 +8,7 @@
 #include "ui/settingsmodel.h"
 #include "ui/overlay.h"
 
+#include "characters.h"
 #include "native.h"
 
 #include "game/controllers.h"
@@ -21,6 +22,7 @@
 #include <SDL3/SDL.h>
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -51,11 +53,52 @@ namespace NativeUi
 namespace
 {
 // ------------------------------------------------------------------------------------------------------------------- the rows
-constexpr u32 TabTexts[Pages] = {TextTabGameplay, TextTabDisplay, TextTabAudio, TextControls, TextTabAccessibility, TextTabLevels};
+constexpr u32 TabTexts[Pages] = {TextTabGameplay, TextTabDisplay, TextTabAudio, TextControls, TextTabAccessibility,
+                                 TextTabCharacters, TextTabLevels};
 constexpr u32 Columns = BindingColumns;
 
 std::vector<Row> g_Rows[Pages];
 bool g_Built = false;
+// The Characters tab's list: Twinsanity's Crash ("") and the installed packs' folders, made again when the settings open
+std::vector<std::string> g_Characters = {""};
+// The preview's turn (degrees), and when the mouse last turned it (seconds of the steady clock)
+f32 g_PreviewYaw = 20.0f;
+double g_PreviewTurned = -100.0;
+bool g_PreviewDragging = false;
+f32 g_PreviewLastX = 0.0f;
+
+double SteadySeconds()
+{
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+s32 CharacterIndex()
+{
+    const std::string& choice = NativeCharacters::Choice();
+    for (size_t i = 0; i < g_Characters.size(); i++)
+    {
+        if (g_Characters[i] == choice)
+        {
+            return static_cast<s32>(i);
+        }
+    }
+
+    return 0;
+}
+
+void RefreshCharacters()
+{
+    g_Characters = {""};
+    for (const std::string& folder : NativeCharacters::Installed())
+    {
+        g_Characters.push_back(folder);
+    }
+
+    if (!g_Rows[TabCharacters].empty())
+    {
+        g_Rows[TabCharacters][0].maximum = static_cast<s32>(g_Characters.size()) - 1;
+    }
+}
 
 std::string Text(u32 id)
 {
@@ -273,6 +316,25 @@ void Build()
     access.push_back(Toggle(TextInvertY, TextDescInvertY, OptionInvertCameraY));
     access.push_back(OptionSlider(TextCameraSpeed, TextDescCameraSpeed, OptionCameraSpeed, 1, 10));
     access.push_back(OptionSlider(TextDeadZone, TextDescDeadZone, OptionStickDeadZone, 0, 10));
+
+    // The Characters tab: who's played (Twinsanity's Crash or a character pack: native/CHARACTERS.md) and how they move. The
+    // pack's own game's movement isn't there yet: "Original" says so and Twinsanity's is played
+    std::vector<Row>& characters = g_Rows[TabCharacters];
+    characters.push_back(Choice(
+        TextCharacter, TextDescCharacter, [] { return CharacterIndex(); },
+        [](s32 value) { NativeCharacters::SetChoice(g_Characters[static_cast<size_t>(value)]); },
+        static_cast<s32>(g_Characters.size()) - 1,
+        [](s32 value) {
+            // A costume by its own name ("Tag Team Racing Crash: Japan Caveman" as "Japan Caveman"): the full name is the
+            // preview's title
+            std::string name = NativeCharacters::DisplayName(g_Characters[static_cast<size_t>(value)]);
+            size_t colon = name.find(": ");
+            return colon != std::string::npos ? name.substr(colon + 2) : name;
+        }));
+    Row movement = OptionChoice(TextMovement, TextDescMovement, OptionCharacterMovement,
+                                {TextMovementTwinsanity, TextMovementOriginal});
+    movement.shown = [] { return !NativeCharacters::Choice().empty(); };
+    characters.push_back(movement);
 
     // The table: the actions in the research's order by key, alt key and the controller's button
     constexpr struct
@@ -708,6 +770,10 @@ void ResetTab(u32 tab)
         SetOption(OptionPauseOnFocusLoss, 1);
         SetOption(OptionRetailFixes, 0);
         break;
+    case TabCharacters:
+        NativeCharacters::SetChoice("");
+        SetOption(OptionCharacterMovement, 0);
+        break;
     case TabAccessibility:
         SetOption(OptionCameraShake, 1);
         SetOption(OptionInvertCameraX, 0);
@@ -1055,6 +1121,27 @@ void TakeInput()
             }
         }
 
+        // The preview turned by dragging it
+        if (g_MouseClicked && hit.region != nullptr && hit.region->kind == HitKind::Preview)
+        {
+            g_PreviewDragging = true;
+            g_PreviewLastX = g_MouseX;
+        }
+
+        if (g_PreviewDragging)
+        {
+            if (g_MouseDown)
+            {
+                g_PreviewYaw += (g_MouseX - g_PreviewLastX) * 0.6f;
+                g_PreviewLastX = g_MouseX;
+                g_PreviewTurned = SteadySeconds();
+            }
+            else
+            {
+                g_PreviewDragging = false;
+            }
+        }
+
         if (g_MouseClicked)
         {
             if (hit.tab >= 0)
@@ -1235,6 +1322,23 @@ SettingsView CurrentSettingsView()
     return view;
 }
 
+std::string SettingsCharacter()
+{
+    return NativeCharacters::Choice();
+}
+
+f32 SettingsPreviewYaw(f32 seconds)
+{
+    // Turning slowly by itself (24 degrees a second), two seconds after the mouse last turned it
+    if (!g_PreviewDragging && SteadySeconds() - g_PreviewTurned > 2.0)
+    {
+        g_PreviewYaw += seconds * 24.0f;
+    }
+
+    g_PreviewYaw = std::fmod(g_PreviewYaw, 360.0f);
+    return g_PreviewYaw;
+}
+
 const std::vector<Row>& SettingsRows(u32 page)
 {
     return g_Rows[page];
@@ -1297,6 +1401,7 @@ s32& SettingsScroll()
 void OpenSettings()
 {
     Build();
+    RefreshCharacters();
     GameController* controller = G_GameController;
     if (controller == nullptr)
     {

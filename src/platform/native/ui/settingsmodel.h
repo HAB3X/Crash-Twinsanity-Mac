@@ -49,6 +49,7 @@ enum Tab : u32
     TabAudio,
     TabControls,
     TabAccessibility,
+    TabCharacters,
     TabLevels,
     TabCount,
     Pages = TabCount,
@@ -90,6 +91,10 @@ std::string BindingCellText(u32 function, u32 column);
 bool BindingCellBindable(u32 function, u32 column);
 // The list's first row shown (the view keeps the selection in its window)
 s32& SettingsScroll();
+// The Characters tab: the character the list shows ("" Twinsanity's Crash, else a pack's folder) and the preview's turn (degrees),
+// moved on by a frame's seconds (it turns slowly by itself unless the mouse turned it a moment ago)
+std::string SettingsCharacter();
+f32 SettingsPreviewYaw(f32 seconds);
 
 // The view (settingsview.cpp): the settings screen on the overlay (reference pixels), the game's menus' bar of prompts, the cursor;
 // each records its hit regions
