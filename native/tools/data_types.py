@@ -53,6 +53,29 @@ reused = [l.strip() for l in (HERE / "native" / "reused_ps2.txt").read_text().sp
 files = sorted(str(p.relative_to(HERE)) for p in (HERE / "src").rglob("*.cpp")
                if (p.relative_to(HERE / "src").parts[0] != "platform" or p.relative_to(HERE / "src").parts[1] == "native")
                and p.name != "abi.cpp") + reused
+
+
+def elements(canonical):
+    """A type's element and how many of them: "short[2]" is ("short", 2), "short" ("short", 1), "short[]" ("short", None)"""
+    m = re.fullmatch(r"(.*?)\s*\[(\d*)\]", canonical)
+    if not m:
+        return canonical, 1
+    return m.group(1), int(m.group(2)) if m.group(2) else None
+
+
+def covers_less(new, old):
+    """Whether the declaration new covers less of its label than old: an array without its size, or fewer of the same element
+    (a label one file reads as its first element and another as the whole array: the converter keeps only what the type covers,
+    so the array's later elements would be lost). The element is compared as written and canonical (clang gives an array of a
+    typedef no canonical form of its own: s16[2] against s16 or short)"""
+    new_element, new_count = elements(new["canonical"])
+    old_element, old_count = elements(old["canonical"])
+    if new_count is None:
+        return True
+    same = new_element == old_element or elements(new["type"])[0] == elements(old["type"])[0]
+    return same and old_count is not None and new_count < old_count
+
+
 types = {}
 with ThreadPoolExecutor(10) as pool:
     for found in pool.map(scan, files):
@@ -60,8 +83,9 @@ with ThreadPoolExecutor(10) as pool:
             if label in types and types[label].get("defined"):
                 info["defined"] = True
             if label in types and types[label]["canonical"] != info["canonical"]:
-                # Declared differently in two files (an array with and without its size): keep the sized one
-                if "[]" in info["canonical"]:
+                # Declared differently in two files: keep the one covering the most (the array over its first element, the
+                # sized array over the unsized)
+                if covers_less(info, types[label]):
                     continue
             types[label] = info
 out = HERE / "build" / "native" / "data_types.json"
