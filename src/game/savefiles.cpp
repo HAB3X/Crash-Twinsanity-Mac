@@ -48,6 +48,10 @@ namespace
 constexpr u32 TrailerSize = 8;
 constexpr u32 UnsummedBytes = 4;
 constexpr u8 FillByte = 0xA5;
+#ifdef TWIN_NATIVE
+// The retail game's save slots: a folder file has at least their summaries
+constexpr u32 RetailSlots = 4;
+#endif
 // The title's Shift-JIS bytes cleared, and the bytes of a character
 constexpr u32 IconTitleBytes = 0x40;
 constexpr u32 SjisCharacterBytes = 2;
@@ -359,6 +363,31 @@ void FolderFile::Read(Stream* from)
     for (u32 i = 0; i < count; i++)
     {
         FolderSummary* summary = summaries[i];
+#ifdef TWIN_NATIVE
+        // A folder file written with fewer slots (the retail four) ends in the buffer's fill: the slots past it are empty
+        if (i >= RetailSlots)
+        {
+            u8 next[sizeof(SaveDate)];
+            u32 at = from->Tell();
+            from->Read(next, sizeof(next), 1);
+            from->Seek(at);
+            bool fill = true;
+            for (u8 byte : next)
+            {
+                fill = fill && byte == FillByte;
+            }
+
+            if (fill)
+            {
+                for (; i < count; i++)
+                {
+                    CallVirtual<void>(summaries[i], summaries[i]->vtable, FolderSummary::ClearSlot);
+                }
+
+                return;
+            }
+        }
+#endif
         CallVirtual<void>(summary, summary->vtable, FolderSummary::ReadSlot, from);
     }
 }

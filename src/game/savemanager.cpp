@@ -49,7 +49,13 @@ alignas(16) u8 g_SaveBuffer[0xF400];
 
 namespace
 {
+#ifdef TWIN_NATIVE
+// Eight save slots natively (the folder's file, the slots page and the card all take the count; a folder file written with the
+// retail four reads as four saves and four empty slots: FolderFile::Read)
+constexpr u32 Banks = 8;
+#else
 constexpr u32 Banks = 4;
+#endif
 constexpr u32 BankSize = 0xF400;
 #ifdef TWIN_NATIVE
 static_assert(sizeof(g_SaveBuffer) >= BankSize);

@@ -180,9 +180,11 @@ bool SaveTestMenuStep(MenuPage* page, MenuInput* input, u32 player)
         return false;
     }
 
+    static Clock::time_point pageShown = Clock::now();
     if (page != g_LastPage)
     {
         g_LastPage = page;
+        pageShown = Clock::now();
         LogPage(page, player);
     }
 
@@ -220,8 +222,9 @@ bool SaveTestMenuStep(MenuPage* page, MenuInput* input, u32 player)
         return false;
     }
 
-    // Selected once the page has been up a moment (its fade)
-    if (Since(g_StepStart) < 0.6f)
+    // Selected once the page has been up a moment (its fade; $TWIN_SAVE_TEST_LINGER seconds more, for its pictures)
+    static const f32 linger = std::getenv("TWIN_SAVE_TEST_LINGER") != nullptr ? static_cast<f32>(std::atof(std::getenv("TWIN_SAVE_TEST_LINGER"))) : 0.0f;
+    if (Since(g_StepStart) < 0.6f || Since(pageShown) < linger)
     {
         return false;
     }

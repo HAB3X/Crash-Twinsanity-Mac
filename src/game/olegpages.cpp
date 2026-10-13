@@ -193,6 +193,12 @@ constexpr f32 SlotEvenX = Rounded(0.3);
 constexpr f32 SlotOddX = Rounded(0.7);
 constexpr f32 SlotsTop = Rounded(0.26);
 constexpr f32 SlotSpacing = Rounded(0.09);
+#ifdef TWIN_NATIVE
+// The native slots page's grid (more than the retail four slots): the rows' spacing and the slots' scale
+constexpr u32 RetailSlotCount = 4;
+constexpr f32 GridRowSpacing = 0.13f;
+constexpr f32 GridSlotScale = 0.85f;
+#endif
 constexpr Vector2 SlotPanelRadii = {Rounded(0.2), Rounded(0.075)};
 
 // Every other screen hidden and the screen shown, over half a second
@@ -1196,8 +1202,16 @@ MenuPage* SaveSlotsPageConstruct(void* memory, SaveManager* manager, MenuWidget*
         MenuItem* item = ConstructSaveCodeItem(MemoryAllocate(sizeof(SaveCodeItem)), 0, SlotItemIds + slot,
                                                SaveCodeItem::AnswerChoose, manager);
         bool even = (slot & 1) == 0;
+#ifdef TWIN_NATIVE
+        // More slots than the retail four: two to a row, a little smaller, so they fit where the four did
+        bool grid = page->count > RetailSlotCount;
+        f32 y = grid ? static_cast<f32>(slot / 2) * GridRowSpacing + SlotsTop : static_cast<f32>(slot) * SlotSpacing + SlotsTop;
+        Vector2 place = {even ? SlotEvenX : SlotOddX, y};
+        Vector2 scale = {grid ? GridSlotScale : 1.0f, grid ? GridSlotScale : 1.0f};
+#else
         Vector2 place = {even ? SlotEvenX : SlotOddX, static_cast<f32>(slot) * SlotSpacing + SlotsTop};
         Vector2 scale = {1.0f, 1.0f};
+#endif
         Vector2 offset = {even ? -1.0f : 1.0f, 0.0f};
         RingWidget* ring =
             RingWidget::Construct(Allocate<RingWidget>(), AnchorMiddle, PanelRings, RingSegments, RingSteps, nullptr);
