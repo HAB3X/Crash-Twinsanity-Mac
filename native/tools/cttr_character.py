@@ -123,8 +123,9 @@ class Disc:
 # RCF archives
 
 def rcf_hash(name):
+    """h = h * 31 + toupper(c) + 32 over the name, a leading backslash left out (COMMON.RCF stores two names with one)"""
     value = 0
-    for c in name.upper():
+    for c in name.lstrip("\\/").upper():
         value = (value * 31 + ord(c) + 32) & 0xFFFFFFFF
     return value
 

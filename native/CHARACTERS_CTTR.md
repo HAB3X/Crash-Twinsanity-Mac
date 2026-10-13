@@ -42,9 +42,18 @@ The names aren't in the directory's order. A name's hash ties it to its director
 
     h = h * 31 + toupper(c) + 32
 
-This is over the name's characters, kept to 32 bits. It was found from the `.rsd` sound files: their names differ in one hex
-digit, four characters from the end, and their hashes differ by multiples of 31^4. Every name on the disc matches (COMMON.RCF has
-two directory entries with no name).
+This is over the name's characters, kept to 32 bits, with a leading backslash left out: COMMON.RCF stores its two movie names
+as `\art\fmv\...`. It was found from the `.rsd` sound files: their names differ in one hex digit, four characters from the end,
+and their hashes differ by multiples of 31^4. Every name on the disc matches.
+
+Rebuilding an archive is byte for byte when nothing is edited. The writer:
+
+- keeps the name table's order;
+- lays files out in their original order at 0x800 boundaries, with zero padding between them;
+- puts an empty file at the next file's offset;
+- sorts the directory by hash.
+
+Studio's CTRadical module does this, and its tests check COMMON.RCF and ONFOOT.RCF.
 
 **Where Crash is:**
 
