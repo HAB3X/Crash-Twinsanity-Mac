@@ -1,7 +1,8 @@
 // The disc: the PS2's drive (Platform::Disc) and the native build's reading of the disc image (ISO 9660), which stands for it.
 // The mods folder (the settings folder's "mods"): a file there at an archive file's path (mods/Levels/Earth/Hub/beach.rm2 for
-// CRASH.BD's Levels\Earth\Hub\beach.rm2, any case) is read in its place. CRASH.BH and CRASH.BD are then found at made-up places
-// past the image: the table with the mods' entries pointing after the archive's data, and the data followed by the mods' files
+// CRASH.BD's Levels\Earth\Hub\beach.rm2, any case) is read in its place, and one at a new path is added to the archive.
+// CRASH.BH and CRASH.BD are then found at made-up places past the image: the table with the mods' entries pointing after the
+// archive's data, and the data followed by the mods' files
 #include "native.h"
 #include "platform/disc.h"
 
@@ -218,12 +219,35 @@ void BuildMods()
             used++;
         }
 
+        found.erase(ArchiveKey(name));
         at += 12 + length;
+    }
+
+    // The others are new files (a cloned chunk): added to the table's end (the game sorts the table as it reads it), named by
+    // their path in the folder
+    for (const auto& [key, path] : found)
+    {
+        std::string name = std::filesystem::relative(path, folder, error).generic_string();
+        std::replace(name.begin(), name.end(), '/', '\\');
+        std::ifstream file(path, std::ios::binary);
+        ModFile read{end, std::vector<u8>(std::istreambuf_iterator<char>(file), {})};
+        u32 length = static_cast<u32>(name.size());
+        u32 offset = static_cast<u32>(end);
+        u32 size = static_cast<u32>(read.bytes.size());
+        size_t at = bytes.size();
+        bytes.resize(at + 12 + length);
+        std::memcpy(bytes.data() + at, &length, 4);
+        std::memcpy(bytes.data() + at + 4, name.data(), length);
+        std::memcpy(bytes.data() + at + 4 + length, &offset, 4);
+        std::memcpy(bytes.data() + at + 8 + length, &size, 4);
+        Native::Log("mods: %s added from %s (%u bytes)", name.c_str(), path.c_str(), size);
+        end = (end + size + 0x7FF) & ~0x7FFull;
+        g_Mods.files.push_back(std::move(read));
+        used++;
     }
 
     if (used == 0)
     {
-        Native::Log("mods: nothing in %s is a file of the game's archive", folder.c_str());
         return;
     }
 

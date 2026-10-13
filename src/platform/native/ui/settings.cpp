@@ -51,7 +51,7 @@ namespace NativeUi
 namespace
 {
 // ------------------------------------------------------------------------------------------------------------------- the rows
-constexpr u32 TabTexts[Pages] = {TextTabGameplay, TextTabDisplay, TextTabAudio, TextControls, TextTabAccessibility};
+constexpr u32 TabTexts[Pages] = {TextTabGameplay, TextTabDisplay, TextTabAudio, TextControls, TextTabAccessibility, TextTabLevels};
 constexpr u32 Columns = BindingColumns;
 
 std::vector<Row> g_Rows[Pages];
@@ -136,6 +136,7 @@ void SetMusic(s32 value)
 
 void OpenScreenPosition();
 void SelectTab(u32 tab);
+void Close();
 
 // The display mode (window or fullscreen) and the window's size: the windows' sizes are the display choices but the last
 s32 WindowSizeChoice()
@@ -295,9 +296,24 @@ void Build()
     controls.push_back(Action(TextResetKeyboard, TextDescResetKeyboard, ResetKeyboardBindings));
     controls.push_back(Action(TextResetController, TextDescResetController, ResetControllerBindings));
 
+    // The levels: each started from the main menu (the screen closed first); from the pause menu a line saying so
+    std::vector<Row>& levels = g_Rows[TabLevels];
+    Row elsewhere = Action(TextLevelsFromMainMenu, TextDescLevelsFromMainMenu, [] {});
+    elsewhere.shown = [] { return !CanStartLevel(); };
+    levels.push_back(elsewhere);
+    for (u32 level = 0; level < LevelCount; level++)
+    {
+        Row row = Action(LevelNameTexts + level, TextDescLevelSelect, [level] {
+            Close();
+            StartLevel(level);
+        });
+        row.shown = [] { return CanStartLevel(); };
+        levels.push_back(row);
+    }
+
     for (u32 tab = 0; tab < TabCount; tab++)
     {
-        if (tab != TabControls)
+        if (tab != TabControls && tab != TabLevels)
         {
             g_Rows[tab].push_back(Action(TextResetDefaults, TextDescResetDefaults, nullptr));
         }

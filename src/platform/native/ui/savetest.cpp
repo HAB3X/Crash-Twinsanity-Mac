@@ -6,6 +6,8 @@
 //          play starts, the chunk it started in is logged, it plays a few seconds and exits 0
 //   autosave   as load, then a checkpoint set at the character and the game's checkpoint autosave (Autosave, as the checkpoint
 //          command does); once the save's file is written and the saving is over, the saved chunk and place are logged, exit 0
+//   level  as load, but at the main menu $TWIN_LEVEL_SELECT's level (0-15) started as the options' level select starts it; once
+//          play starts, the chunk and area it started in are logged, it plays a few seconds and exits 0
 //   restart    from --quick's beach (or $TWIN_SWEEP_LEVEL's chunk): pause, "restart checkpoint"; once play has started again
 //          after the fade, exit 0
 // With $TWIN_SWEEP_LEVEL (and a long $TWIN_SWEEP_SECONDS) save and restart start in that chunk: a later level's save
@@ -40,6 +42,7 @@ enum class Mode
     Load,
     Autosave,
     Restart,
+    Level,
 };
 
 // A menu item wanted: by its text in the text table, or the first save slot (the slots page's items: their text an empty string,
@@ -79,6 +82,7 @@ void ReadSettings()
              : text == "load"     ? Mode::Load
              : text == "autosave" ? Mode::Autosave
              : text == "restart"  ? Mode::Restart
+             : text == "level"    ? Mode::Level
                                   : Mode::None;
     if (const char* seconds = std::getenv("TWIN_SAVE_TEST_SECONDS"))
     {
@@ -421,8 +425,23 @@ void SaveTestFrame()
         }
 
         break;
+    case GameController::StateMainMenu:
+        // The level select's start, once the menu has been up a moment
+        if (g_Mode == Mode::Level && g_Phase == 1)
+        {
+            static Clock::time_point since = Clock::now();
+            if (Since(since) > 1.5f)
+            {
+                const char* level = std::getenv("TWIN_LEVEL_SELECT");
+                StartLevel(level != nullptr ? static_cast<u32>(std::atoi(level)) : 0);
+                g_Phase = 2;
+                g_StepStart = Clock::now();
+            }
+        }
+
+        break;
     case GameController::StateWatching:
-        if (g_Playing && g_Mode == Mode::Load)
+        if (g_Playing && (g_Mode == Mode::Load || g_Mode == Mode::Level))
         {
             DriveLoadedPlay(controller);
             if (Since(g_PlayStart) > g_Seconds)
@@ -433,7 +452,7 @@ void SaveTestFrame()
 
         break;
     case GameController::StatePlaying:
-        if (g_Mode == Mode::Load && g_Playing)
+        if ((g_Mode == Mode::Load || g_Mode == Mode::Level) && g_Playing)
         {
             DriveLoadedPlay(controller);
         }
@@ -442,11 +461,11 @@ void SaveTestFrame()
         {
             g_Playing = true;
             g_PlayStart = Clock::now();
-            Native::Log("savetest: playing, loaded chunk %s, place %u",
+            Native::Log("savetest: playing, loaded chunk %s, place %u, area %u, character %u",
                         controller->progress.startChunk.string != nullptr ? controller->progress.startChunk.string : "?",
-                        controller->saveController.place);
+                        controller->saveController.place, controller->progress.play.area, controller->progress.play.character);
         }
-        else if (Since(g_PlayStart) > g_Seconds && g_Mode == Mode::Load)
+        else if (Since(g_PlayStart) > g_Seconds && (g_Mode == Mode::Load || g_Mode == Mode::Level))
         {
             Finish(0, "loaded and played");
         }

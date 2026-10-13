@@ -210,6 +210,10 @@ enum NativeText : u32
     TextDescMouseLook,
     TextDescMouseSensitivity,
     TextDescInvertMouseY,
+    TextTabLevels,
+    TextDescLevelSelect,
+    TextLevelsFromMainMenu,
+    TextDescLevelsFromMainMenu,
     NativeTextEnd,
 };
 
@@ -390,6 +394,13 @@ bool CursorShown();
 // The settings screen (settings.cpp): the options' tabs (display, audio, controls, gameplay) drawn through the game's renderer in
 // place of the old options pages, taking the keyboard, the pads and the mouse while it's open
 void OpenSettings();
+// The level select (levelselect.cpp): the game's levels (their names the code file's texts from LevelNameTexts), each one's first
+// chunk, whether a level can be started now (from the main menu) and a level started
+constexpr u32 LevelCount = 16;
+constexpr u32 LevelNameTexts = 0x47;
+const char* LevelChunk(u32 level);
+bool CanStartLevel();
+void StartLevel(u32 level);
 bool SettingsOpen();
 void SettingsFrame();
 // After OLEG's widgets are drawn (GameController::Draw): the settings' panels, and the game's menus' selection oval

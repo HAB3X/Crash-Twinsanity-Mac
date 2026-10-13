@@ -49,6 +49,7 @@ enum Tab : u32
     TabAudio,
     TabControls,
     TabAccessibility,
+    TabLevels,
     TabCount,
     Pages = TabCount,
 };
