@@ -145,10 +145,13 @@ foreach(target game twinsanity)
 target_include_directories(${target} PRIVATE ${ROOT}/native/include ${ROOT}/include ${ROOT}/src/platform/native)
 target_compile_definitions(${target} PRIVATE TWIN_NATIVE)
 # What the PS2 build's flags keep of the retail code's behaviour: no fused multiply-adds (the R5900 has none the game's code
-# uses), no assumptions about aliasing, null checks or signed overflow the retail compiler didn't make
+# uses), no assumptions about aliasing, null checks or signed overflow the retail compiler didn't make. A float made an integer
+# out of the integer's range saturates, as the R5900's conversion and arm64's do (x86-64's own gives 0x80000000, and a negative
+# float made unsigned wraps): -fno-strict-float-cast-overflow makes the conversions clang's saturating ones (the same
+# instruction on arm64). The retail code does it: a trigger's check interval of 2^32 clock units, a sprite's wobble angle
 target_compile_options(${target} PRIVATE
     -std=gnu++2c -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-strict-aliasing -fno-delete-null-pointer-checks -fwrapv
-    -ffp-contract=off -Wall -Wno-invalid-offsetof -Wno-unused-variable -Wno-unused-function -Wno-unused-but-set-variable
+    -ffp-contract=off -fno-strict-float-cast-overflow -Wall -Wno-invalid-offsetof -Wno-unused-variable -Wno-unused-function -Wno-unused-but-set-variable
     -Wno-unknown-pragmas -Wno-missing-braces -Wno-mismatched-tags)
 target_link_libraries(${target} PRIVATE SDL3::SDL3 OpenGL::GL PkgConfig::FFMPEG)
 endforeach()
