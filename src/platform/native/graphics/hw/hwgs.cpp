@@ -196,6 +196,10 @@ struct Target
     bool aligned = false;
     GLuint texture = 0;
     GLuint fbo = 0;
+    // Whether its framebuffer is complete: not when its size at the scale is 0 or past what a texture can be (MaxTargetSize). A
+    // draw into an incomplete framebuffer is an error in GL, and macOS's GL (on Metal) aborts on it instead (a render pass with
+    // no usable attachment): such a target is the software GS's
+    bool complete = false;
     Gs::PageSet pages;
     Gs::PageSet valid;
     // The pages it holds newest with every other target's copy out of date (MarkDrawn has nothing to do there)
@@ -1398,6 +1402,9 @@ private:
 HwGs* g_Hw = nullptr;
 // Whether g_Hw is there, for the other threads (the UI's settings)
 std::atomic<bool> g_HwActive{false};
+// The biggest texture (a side in pixels) a target is made as: GL_MAX_TEXTURE_SIZE on Apple silicon's GL, the least of the GPUs
+// it runs on
+constexpr u32 MaxTargetSize = 16384;
 // The draws' viewport (see Flush)
 constexpr GLint BigViewSize = 16384;
 constexpr GLint BigViewOrigin = 4096;
@@ -1672,23 +1679,35 @@ Target* HwGs::TargetFor(u32 bp, u32 bw, u32 psm, u32 height, bool frame)
     GLsizei h = static_cast<GLsizei>(t.height * t.scale);
     gl.GenFramebuffers(1, &t.fbo);
     gl.BindFramebuffer(GL_FRAMEBUFFER, t.fbo);
+    // (no storage for a size GL can't make: the framebuffer is left incomplete, and the target to the software GS)
+    const bool fits = w > 0 && h > 0 && static_cast<u32>(w) <= MaxTargetSize && static_cast<u32>(h) <= MaxTargetSize;
     if (t.depth)
     {
-        gl.TexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(GL_DEPTH32F_STENCIL8), w, h, 0, GL_DEPTH_STENCIL,
-                      GL_FLOAT_32_UNSIGNED_INT_24_8_REV, nullptr);
+        if (fits)
+        {
+            gl.TexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(GL_DEPTH32F_STENCIL8), w, h, 0, GL_DEPTH_STENCIL,
+                          GL_FLOAT_32_UNSIGNED_INT_24_8_REV, nullptr);
+        }
+
         gl.FramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, t.texture, 0);
         gl.DrawBuffer(GL_NONE);
         gl.ReadBuffer(GL_NONE);
     }
     else
     {
-        gl.TexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(GL_RGBA8), w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        if (fits)
+        {
+            gl.TexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(GL_RGBA8), w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        }
+
         gl.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t.texture, 0);
     }
 
-    if (gl.CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+    t.complete = fits && gl.CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    if (!t.complete)
     {
-        std::fprintf(stderr, "graphics: hardware renderer: a target's framebuffer isn't complete\n");
+        std::fprintf(stderr, "graphics: hardware renderer: the target %x/%u class %u (%dx%d at the scale) can't be drawn into: the "
+                     "software GS draws it\n", bp, bw, cls, w, h);
     }
 
     targets_.push_back(std::move(made));
@@ -3692,6 +3711,7 @@ Target* HwGs::ScratchStencil(Target* colour)
     made->height = colour->height;
     made->scale = colour->scale;
     made->depth = true;
+    made->complete = colour->complete;
     Gl& gl = GetGl();
     gl.GenTextures(1, &made->texture);
     gl.BindTexture(GL_TEXTURE_2D, made->texture);
@@ -3932,6 +3952,11 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
     nextDepthHigh_ = highestZ >= 0x80000000u;
     Target* depth = depthUsed ? TargetFor(state.zbp, state.fbw, state.zpsm, height) : nullptr;
     nextDepthHigh_ = false;
+    if (!colour->complete || (depth != nullptr && !depth->complete))
+    {
+        return Fallback(state, vertexes, count, rect, "a target the GPU can't hold (no pixels, or past MaxTargetSize at the scale)");
+    }
+
     n = static_cast<s32>(colour->scale);
     if (static_cast<u32>(rect.right) >= colour->width)
     {
@@ -4013,7 +4038,8 @@ bool HwGs::Draw(Gs::Gs::DrawState& state, const Gs::Vertex* vertexes, u32 count)
                 // repeat)
                 // (two texels past its edge allowed: a sprite's end coordinate is past its last pixel's and the region reaches
                 // one more for the filter; the filter's weight there is nothing and the sampler clamps)
-                if (known->bp == level.bp && known->bw == level.bw && known->cls == sourceClass && left >= 0 && top >= 0 &&
+                if (known->complete && known->bp == level.bp && known->bw == level.bw && known->cls == sourceClass && left >= 0 &&
+                    top >= 0 &&
                     static_cast<u32>(right) <= known->width + 1 && static_cast<u32>(bottom) <= known->height + 1 &&
                     (state.wms == Gs::WrapClamp || static_cast<u32>(right) < level.width) &&
                     (state.wmt == Gs::WrapClamp || static_cast<u32>(bottom) < level.height))
@@ -5120,7 +5146,8 @@ bool HwGs::DisplayTexture(NativeGraphics::DisplayTexture* display, Target** show
         u32 cls = ClassOf(fb.psm);
         for (auto& known : targets_)
         {
-            if (known->bp == fb.fbp * 32 && known->bw == fb.fbw && known->cls == cls && fb.dbx + c.width <= known->width)
+            if (known->bp == fb.fbp * 32 && known->bw == fb.fbw && known->cls == cls && fb.dbx + c.width <= known->width &&
+                known->complete)
             {
                 c.target = known.get();
             }
@@ -5134,6 +5161,10 @@ bool HwGs::DisplayTexture(NativeGraphics::DisplayTexture* display, Target** show
         if (fb.dby + c.height > c.target->height)
         {
             c.target = TargetFor(c.target->bp, c.target->bw, c.target->psm, fb.dby + c.height);
+            if (!c.target->complete)
+            {
+                return false;
+            }
         }
 
         if (std::getenv("TWIN_HW_DISPLAY_TRACE") != nullptr)
