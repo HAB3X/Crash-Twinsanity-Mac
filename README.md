@@ -14,18 +14,19 @@ For Apple silicon and Intel Macs. Download `Crash-Twinsanity-macOS.zip` from the
 
 * Native graphics on the GPU at up to 8x resolution, with HD texture packs
 * Sound, music and movies
-* Saving and loading
+* Saving and loading, with eight save slots
 * Keyboard, mouse and controllers, with remappable controls
 * A new options screen, 60 Hz, widescreen and 21:9
 * Community fixes and cutscene skipping
 * A level select, and a mods folder for edited game files
+* Play as Crash from The Wrath of Cortex or Crash Tag Team Racing (and his costumes), made from your own discs with the tools in `native/tools` (see [native/CHARACTERS.md](native/CHARACTERS.md))
 
 ## Still to do
 
 * A steady 60 fps
 * Testing on a real Intel Mac (it runs under Rosetta)
 * Linux and Windows
-* More save slots
+* The other games' own movement for their characters
 
 ## Building
 
